@@ -1,0 +1,55 @@
+name: angl_BM2
+channels:
+  - conda-forge
+  - defaults
+  - bioconda
+  - anaconda
+  - pytorch
+dependencies:
+  - python=3.11
+  - nvidia::cuda
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - anaconda::cudatoolkit=11.8
+  - pip
+  - anndata
+  - scanpy
+  - scvi-tools
+  - r-seurat
+  - r-devtools
+  - ca-certificates
+  - openssl
+  - ipykernel
+  - jupyter
+  - certifi
+  - dill
+  - papermill
+  - r-bigstatsr
+  - r-data.table
+  - r-optparse
+  - bioconductor-s4vectors
+  - bioconda::bioconductor-singlecellexperiment
+  - conda-forge::louvain
+  - scipy
+  - bioconda::bioconductor-glmgampoi
+  - conda-forge::r-httpgd
+  - bioconda::bioconductor-zellkonverter
+  - igraph
+  - pip:
+      - rpy2
+      - anndata2ri
+      - scib
+      - harmony-pytorch
+      - harmonypy
+      - bbknn
+      - scanorama
+      # - mnnpy
+      - scgen
+      # - trvae
+      # - travep
+      - desc
+      - jax[cuda12]
+
+# Additional packages to install manually:
+# kBET from within R (https://github.com/theislab/kBET)
+# schard from within R (https://github.com/cellgeni/schard/)
