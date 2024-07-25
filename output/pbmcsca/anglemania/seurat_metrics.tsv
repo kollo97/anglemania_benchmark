@@ -1,0 +1,16 @@
+	0
+method	seurat_anglemania
+NMI_cluster/label	0.7838410294407028
+ARI_cluster/label	0.7552916686771987
+ASW_label	0.5968515574932098
+ASW_label/batch	0.8976879413197167
+PCR_batch	0.8798671002535319
+cell_cycle_conservation	
+isolated_label_F1	0.8149922670595092
+isolated_label_silhouette	0.6592859774827957
+graph_conn	0.9670669586097824
+kBET	0.24281555033805857
+iLISI	0.4690349767580391
+cLISI	0.9951077143005482
+hvg_overlap	0.48275
+trajectory	

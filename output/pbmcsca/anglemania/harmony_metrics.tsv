@@ -1,0 +1,16 @@
+	0
+method	harmony_anglemania
+NMI_cluster/label	0.7614053198046687
+ARI_cluster/label	0.7319776286398086
+ASW_label	0.5510882847011089
+ASW_label/batch	0.8770189698601466
+PCR_batch	0.9010084764052695
+cell_cycle_conservation	
+isolated_label_F1	0.7539455878650554
+isolated_label_silhouette	0.6007328145205975
+graph_conn	0.962529290404828
+kBET	0.20265908482369321
+iLISI	0.3676813695544385
+cLISI	0.9911520569544598
+hvg_overlap	1.0
+trajectory	

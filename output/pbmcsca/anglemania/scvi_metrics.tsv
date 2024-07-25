@@ -1,0 +1,16 @@
+	0
+method	scvi_anglemania
+NMI_cluster/label	0.7548519072354528
+ARI_cluster/label	0.675037365835449
+ASW_label	0.5721749067306519
+ASW_label/batch	0.9015588627848913
+PCR_batch	0.9029529945255511
+cell_cycle_conservation	
+isolated_label_F1	0.8284082643100281
+isolated_label_silhouette	0.6497707888484001
+graph_conn	0.9817991586095159
+kBET	0.2717020882444051
+iLISI	0.4520023426953181
+cLISI	0.9903558440884729
+hvg_overlap	1.0
+trajectory	
