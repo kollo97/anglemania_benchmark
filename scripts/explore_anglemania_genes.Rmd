@@ -1,0 +1,149 @@
+---
+title: "explore_angelmania_genes"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 10)
+knitr::opts_chunk$set(fig.width = 14)
+```
+
+```{r, load libraries}
+.libPaths(.Library)
+library(ggplot2)
+library(dplyr)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(tidyverse)
+library(ComplexHeatmap)
+library(enrichplot)
+```
+
+
+
+```{r}
+angl_genes <- read.table("../output/hvg_and_anglemania_genes.tsv", sep = "\t", header = T)
+angl_genes <- angl_genes %>%
+    mutate(genes = gsub("\\[|\\]", "", genes),
+           genes = strsplit(genes, ", "))
+angl_genes
+long <- angl_genes %>%
+    unnest(genes)
+
+binary_matrix <- long %>%
+  mutate(present = 1) %>%
+  pivot_wider(names_from = genes, values_from = present, values_fill = list(present = 0)) %>%
+  select(-dataset, -gene_selection) %>%
+  column_to_rownames("dataset_gene_selection")
+```
+
+```{r}
+upset <- make_comb_mat(t(binary_matrix))
+
+UpSet(upset, 
+      comb_order = order(comb_size(upset), decreasing = TRUE), 
+      comb_col = c("red", "blue", "black")[comb_degree(upset)])
+
+```
+
+```{r}
+angl_hao <- angl_genes %>%
+    filter(dataset == "Hao_Satija_Cell_2021_PBMC") %>%
+    filter(gene_selection == "anglemania") %>%
+    pull(genes) %>%
+    unlist()
+angl_pbmcsca <- angl_genes %>%
+    filter(dataset == "pbmcsca") %>% 
+    filter(gene_selection == "anglemania") %>%
+    pull(genes) %>%
+    unlist()
+
+intersect_angl <- intersect(angl_hao, angl_pbmcsca)
+
+# Map to Entrez IDs
+toENTREZ <- function(gene_names){
+    mapIds(org.Hs.eg.db, keys = gene_names, column = "ENTREZID", keytype = "SYMBOL", multiVals = "first") %>% na.omit()
+}
+entrez_genes <- toENTREZ(intersect_angl)
+entrez_genes[1:50]
+any(sapply(entrez_genes, is.na))
+entrez_genes <- na.omit(entrez_genes)
+
+
+GO <- enrichGO(toENTREZ(angl_hao), 'org.Hs.eg.db', ont="BP")
+dotplot(GO) + labs(title = "anglemania Hao")
+upsetplot(GO) + labs(title = "anglemania Hao")
+
+kegg <- enrichKEGG(toENTREZ(angl_hao), 'hsa')
+dotplot(kegg) + labs(title = "anglemania Hao")
+upsetplot(kegg) + labs(title = "anglemania Hao")
+
+GO <- enrichGO(toENTREZ(angl_pbmcsca), 'org.Hs.eg.db', ont="BP")
+dotplot(GO) + labs(title = "anglemania pbmcsca")
+upsetplot(GO) + labs(title = "anglemania pbmcsca")
+
+kegg <- enrichKEGG(toENTREZ(angl_pbmcsca), 'hsa')
+dotplot(kegg) + labs(title = "anglemania pbmcsca")
+upsetplot(kegg) + labs(title = "anglemania pbmcsca")
+
+GO <- enrichGO(toENTREZ(intersect_angl), 'org.Hs.eg.db', ont="BP")
+dotplot(GO) + labs(title = "anglemania intersect")
+upsetplot(GO) + labs(title = "anglemania intersect")
+
+kegg <- enrichKEGG(toENTREZ(intersect_angl), 'hsa')
+dotplot(kegg) + labs(title = "anglemania intersect")
+upsetplot(kegg) + labs(title = "anglemania intersect")
+
+```
+
+
+```{r}
+hvg_hao <- angl_genes %>%
+    filter(dataset == "Hao_Satija_Cell_2021_PBMC") %>%
+    filter(gene_selection == "hvg") %>%
+    pull(genes) %>%
+    unlist()
+hvg_pbmcsca <- angl_genes %>%
+    filter(dataset == "pbmcsca") %>%
+    filter(gene_selection == "hvg") %>%
+    pull(genes) %>%
+    unlist()
+hvg_intersect <- intersect(hvg_hao, hvg_pbmcsca)
+
+
+GO <- enrichGO(toENTREZ(hvg_hao), 'org.Hs.eg.db', ont="BP")
+dotplot(GO) + labs(title = "hvg Hao")
+upsetplot(GO) + labs(title = "hvg Hao")
+
+kegg <- enrichKEGG(toENTREZ(hvg_hao), 'hsa')
+dotplot(kegg) + labs(title = "hvg Hao")
+upsetplot(kegg) + labs(title = "hvg Hao")
+
+GO <- enrichGO(toENTREZ(hvg_pbmcsca), 'org.Hs.eg.db', ont="BP")
+dotplot(GO) + labs(title = "hvg pbmcsca")
+upsetplot(GO) + labs(title = "hvg pbmcsca")
+
+kegg <- enrichKEGG(toENTREZ(hvg_pbmcsca), 'hsa')
+dotplot(kegg) + labs(title = "hvg pbmcsca")
+upsetplot(kegg) + labs(title = "hvg pbmcsca")
+
+GO <- enrichGO(toENTREZ(hvg_intersect), 'org.Hs.eg.db', ont="BP")
+dotplot(GO) + labs(title = "hvg intersect")
+upsetplot(GO) + labs(title = "hvg intersect")
+
+kegg <- enrichKEGG(toENTREZ(hvg_intersect), 'hsa')
+dotplot(kegg) + labs(title = "hvg intersect")
+upsetplot(kegg) + labs(title = "hvg intersect")
+```
