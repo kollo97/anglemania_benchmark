@@ -1,0 +1,91 @@
+```{r}
+.libPaths(.Library)
+suppressPackageStartupMessages({
+    library(splatter)
+    library(stringr)
+    library(dplyr)
+    library(SPARSim)
+})
+```
+
+
+
+```{r}
+dparams = expand.grid(
+    batch.facLoc = c(seq(0.1, 1, 0.1)), # Strength of batch effect
+    de.facLoc    = c(seq(0.1, 1, 0.1)), # Biological variability
+    nbatch       = c(2,3,4,5,10), # Number of batches
+    ngroup       = c(2,4,6,8), # Number of cell types
+    groupCells   = 1000, # Number of cells per cell type (adjust as needed)
+    stringsAsFactors = FALSE
+)
+names(dparams)
+
+outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad"
+samplesheet <- dparams %>%
+    mutate(sample_name = across(everything(), ~paste0(cur_column(), .x))) %>%
+    rowwise() %>%
+    mutate(sample_name = paste(sample_name, collapse = "_")) %>%
+    ungroup() %>%
+    mutate(original_h5ad = file.path(outdir, paste0(sample_name, ".h5ad"))) %>%
+    select(sample_name, original_h5ad, everything())
+colnames(samplesheet)
+
+
+```
+
+```{r}
+create_and_save_sim <- function(sample_name, ngroup, nbatch, groupCells, batch.facLoc, de.facLoc, outfile){
+
+    if (!file.exists(outfile)) {
+        print(paste0("Processing ", sample_name, " with params:"))
+        print(knitr::kable(cbind(ngroup, batch.facLoc, de.facLoc)))
+        set.seed(42)
+        message("Simulating data")
+
+        sim = splatSimulate(
+            batchCells = rep(groupCells * ngroup, nbatch),
+            group.prob = rep(1/ngroup, ngroup),
+            batch.facLoc = batch.facLoc,
+            batch.facScale = 0.1,
+            method = "groups",
+            verbose = FALSE,
+            out.prob    = 0.001,
+            de.prob     = 0.1,
+            de.facLoc   = de.facLoc,
+            de.facScale = 0.1,
+            bcv.common  = 0.1
+        )
+
+        counts <- t(counts(sim)) %>% as.matrix() # for AnnData the matrix is transposed: Gene in columns Cells in rows
+        metadata <- colData(sim) %>% as.data.frame()
+        var <- rowData(sim) %>% as.data.frame()
+
+        message("Creating AnnData object")
+        adata <- anndataR::AnnData(
+                            X = counts,
+                            obs = metadata,
+                            var = var
+                        )
+        message(paste0("Saving ", outfile))
+        anndataR::write_h5ad(adata, path = outfile, mode = "w", compression = "none")
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+}
+```
+
+```{r}
+library(doMC)
+registerDoMC(25)
+foreach(i = 1:nrow(samplesheet))%dopar%{
+    set.seed(42)
+    dparam = samplesheet[i,]
+    create_and_save_sim(dparam$sample_name, dparam$ngroup, dparam$nbatch, dparam$groupCells, dparam$batch.facLoc, dparam$de.facLoc, dparam$original_h5ad)    
+}
+```
+
+```{r}
+# write.table(samplesheet, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
