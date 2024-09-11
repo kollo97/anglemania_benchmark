@@ -1,6 +1,6 @@
 rule metrics:
     input:
-        original_h5ad = rules.preprocess.output,
+        original_h5ad=lambda wildcards: file_paths[wildcards.sample],
         integrated_h5ad = rules.integrate.output
     output:
         metrics = join(out_metrics, "{sample}/{integration_method}/{sample}_{gene_selection}.tsv")
