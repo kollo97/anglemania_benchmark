@@ -1,0 +1,17 @@
+name: SEACells_workflow
+
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet.tsv"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+
+batch_key: "Batch"
+label_key: "Group"
+
+integration_methods: ["harmony", "scvi"] # "seurat", "scanvi"
+gene_selection: [ "hvg", "angl"] #"full", "rand", 
+gpu: True
+

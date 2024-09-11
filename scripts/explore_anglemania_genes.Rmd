@@ -20,6 +20,8 @@ knitr::opts_chunk$set(fig.height = 10)
 knitr::opts_chunk$set(fig.width = 14)
 ```
 
+
+
 ```{r, load libraries}
 .libPaths(.Library)
 library(ggplot2)
@@ -50,7 +52,7 @@ binary_matrix <- long %>%
 ```
 
 ```{r}
-upset <- make_comb_mat(t(binary_matrix))
+upset <- make_comb_mat(t(binary_matrix), mode = "intersect")
 
 UpSet(upset, 
       comb_order = order(comb_size(upset), decreasing = TRUE), 
@@ -70,7 +72,7 @@ angl_pbmcsca <- angl_genes %>%
     pull(genes) %>%
     unlist()
 
-intersect_angl <- intersect(angl_hao, angl_pbmcsca)
+intersect_angl <- intersect(angl_hao, angl_pbmcsca) %>% unique()
 
 # Map to Entrez IDs
 toENTREZ <- function(gene_names){
@@ -146,4 +148,53 @@ upsetplot(GO) + labs(title = "hvg intersect")
 kegg <- enrichKEGG(toENTREZ(hvg_intersect), 'hsa')
 dotplot(kegg) + labs(title = "hvg intersect")
 upsetplot(kegg) + labs(title = "hvg intersect")
+```
+
+
+```{js, echo=FALSE, include=FALSE}
+document.addEventListener('DOMContentLoaded', function() {
+  var images = document.querySelectorAll('img');
+  images.forEach(function(img, index) {
+    var button = document.createElement('button');
+    button.textContent = 'Download as PDF';
+    button.style = 'display: block; margin-top: 10px;';
+
+    button.onclick = function() {
+      var jsPDF = document.createElement('script');
+      jsPDF.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.3.1/jspdf.umd.min.js';
+      jsPDF.onload = function() {
+        var { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+          orientation: 'portrait',
+          unit: 'pt',
+          format: 'a4'
+        });
+
+        var imgEl = new Image();
+        imgEl.onload = function() {
+          // Calculate scale ratio to fit the image within the page
+          var scaleWidth = 595 / this.width;
+          var scaleHeight = 842 / this.height;
+          var scale = Math.min(scaleWidth, scaleHeight);
+
+          // Calculate dimensions to maintain aspect ratio
+          var imgWidth = this.width * scale;
+          var imgHeight = this.height * scale;
+
+          // Position the image centered horizontally and vertically
+          var xPos = (595 - imgWidth) / 2;
+          var yPos = (842 - imgHeight) / 2;
+
+          doc.addImage(this, 'PNG', xPos, yPos, imgWidth, imgHeight);
+          doc.save('download-' + index + '.pdf');
+        };
+        imgEl.crossOrigin = "Anonymous";
+        imgEl.src = img.src;
+      };
+      document.body.appendChild(jsPDF);
+    };
+
+    img.parentNode.insertBefore(button, img.nextSibling);
+  });
+});
 ```
