@@ -1,6 +1,7 @@
 import click
 # Python packages
 import scanpy as sc
+import scanpy.external as sce
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -96,6 +97,18 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
         
         click.secho(f"Saving SCANVI integrated data to {outfile}", fg="bright_yellow", err=True)
         adata.write_h5ad(outfile)
+    elif integration_method == "scanorama":
+        click.secho("Setting up SCANORAMA model...", fg="bright_yellow", err=True)
+        if "X_pca" not in adata.obsm:
+            sc.tl.pca(adata)
+        sce.pp.scanorama_integrate(
+            adata,
+            key=batch_key,
+            basis="X_pca",
+            adjusted_basis="X_emb",
+            batch_size=10000
+        )
+        
 
     click.secho("Integration process completed successfully.", fg="bright_yellow", err=True)
 

@@ -11,7 +11,7 @@ out_metrics: "metrics/"
 batch_key: "Batch"
 label_key: "Group"
 
-integration_methods: ["harmony", "scvi"] # "seurat", "scanvi", "scanorama"
+integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
 gene_selection: [ "hvg", "angl"] #"full", "rand", 
 gpu: True
 

@@ -2,7 +2,6 @@ suppressPackageStartupMessages({
     .libPaths(.Library)
     library(Seurat)
     library(optparse)
-    library(SeuratDisk)
     library(dplyr)
     library(anndataR)
 })

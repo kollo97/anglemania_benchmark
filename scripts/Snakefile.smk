@@ -3,7 +3,7 @@ import os
 import pandas as pd
 from os.path import join
 from snakemake.utils import validate
-configfile: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/snakemake_config.yml"
+# configfile: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/snakemake_config.yml"
 #### COMMON RUN SPECIFICS ####
 out_preprocessed = join(config["output_dir"], config["out_preprocessed"])
 out_integration = join(config["output_dir"], config["out_integration"])

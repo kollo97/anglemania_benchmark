@@ -121,18 +121,19 @@ def calc_metrics(original_h5ad,
     click.secho(f"Input files are: {original_h5ad}, {integrated_h5ad}", fg='bright_yellow', err=True)
 
     adata = sc.read_h5ad(original_h5ad)
-    adata.layers["raw_counts"] = adata.X
-    # the normalized expression is in adata.layers["data"]
+    adata.layers["counts"] = adata.X.copy()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    adata.layers["logcounts"] = adata.X.copy()
     
-    adata_integrated = sc.read_h5ad(integrated_h5ad)
+    adata_integrated = sc.read_h5ad(integrated_h5ad) # is already log normalized => located in .X 
     
     if integration_method == 'seurat':
-        # apparently the SeuratDisk Convert function produces an old format of the h5ad format, so just reconstruct it
         adata_integrated.layers["raw_counts"] = adata.X
         # make category type, so that the metrics can be calculated
         adata_integrated.obs[batch_key] = adata_integrated.obs[batch_key].astype("category")
         adata_integrated.obs[label_key] = adata_integrated.obs[label_key].astype("category")
-        sc.tl.pca(adata_integrated, layer="data")
+        sc.tl.pca(adata_integrated, layer="data") # anndataR::write_h5ad() writes the default assay of the seurat object (which was "integrated") to the "data" layer
         
         adata_integrated.obsm["X_emb"] = adata_integrated.obsm['X_pca']
     
