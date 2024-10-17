@@ -7,7 +7,8 @@ rule preprocess:
         outfile = join(out_preprocessed, "{sample}_{gene_selection}.tsv")
         
     params:
-        batch_key = config["batch_key"]
+        batch_key = config["batch_key"],
+        anglemania_mode = config["anglemania_mode"]
     # log:
     #     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/snakemake_logs/preprocess/{sample}_{gene_selection}_log_test.txt"
     shell:
@@ -16,5 +17,6 @@ rule preprocess:
             --infile {input.original_h5ad} \
             --outfile {output.outfile} \
             --batch_key {params.batch_key} \
-            --gene_selection {wildcards.gene_selection} 
+            --gene_selection {wildcards.gene_selection} \
+            --anglemania_mode {params.anglemania_mode} 
         """

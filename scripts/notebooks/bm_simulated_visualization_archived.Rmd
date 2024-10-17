@@ -59,7 +59,7 @@ library(matrixStats)
 
 # Load metrics
 ```{r}
-metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/metrics/combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/archived/metrics/combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
 
 facloc_batch <- sapply(metrics$sample, function(x){
     x <- stringr::str_split(x, "_")[[1]][1]

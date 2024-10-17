@@ -26,7 +26,7 @@ from os.path import join
 @click.option("--integration_method", 
               prompt="The implementation of the integration method to use from the scib package", 
               help="Specify integration method. One of ['harmony','scvi','scanvi']", 
-              type=click.Choice(["harmony","scvi","scanvi"]))
+              type=click.Choice(["harmony","scvi","scanvi","scanorama"]))
 @click.option("--batch_key", 
               default="batch", 
               help="Batch key specifying a column in the metadata that divides the batches")
@@ -45,6 +45,10 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
     selected_features  = pd.read_csv(feature_subset, sep = "\t")
     selected_features = selected_features.hgnc_symbol.to_list()
     adata = ad.read_h5ad(infile)
+    # COMMENT: I ran into errors with scanorama because the cells are not sorted by batch. 
+    # https://github.com/brianhie/scanorama/discussions/131
+    idx = adata.obs.sort_values(batch_key).index
+    adata = adata[idx,].copy()
     
     adata.layers["counts"] = adata.X.copy()
     sc.pp.normalize_total(adata, target_sum=1e4)
@@ -52,7 +56,7 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
     adata.layers["logcounts"] = adata.X.copy()
 
     adata = adata[:, selected_features].copy()
-    #and layers["data"] is the normalized data
+    # layers["data"] is the normalized data
     
     if integration_method == "harmony":
         click.secho("Performing PCA...", fg="bright_yellow", err=True)
@@ -67,6 +71,8 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
     elif integration_method == "scvi":
         click.secho("Setting up SCVI model...", fg="bright_yellow", err=True)
         scvi.model.SCVI.setup_anndata(adata, layer="counts", batch_key=batch_key)
+        # "models raw counts directly, so it is important that we provide it with a count matrix rather than a normalized expression matrix"
+        # https://www.sc-best-practices.org/cellular_structure/integration.html#variational-autoencoder-vae-based-integration
         max_epochs_scvi = np.min([round((20000 / adata.n_obs) * 400), 400])
         
         click.secho("Training SCVI model...", fg="bright_yellow", err=True)
@@ -108,6 +114,7 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
             adjusted_basis="X_emb",
             batch_size=10000
         )
+        adata.write_h5ad(outfile)
         
 
     click.secho("Integration process completed successfully.", fg="bright_yellow", err=True)

@@ -27,7 +27,7 @@ from os.path import join
 @click.option("--integration_method",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
-              type=click.Choice(['harmony','scvi','scanvi', 'seurat']))
+              type=click.Choice(['harmony','scvi','scanvi', 'seurat', 'scanorama']))
 @click.option("--gene_selection",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
@@ -133,7 +133,7 @@ def calc_metrics(original_h5ad,
         # make category type, so that the metrics can be calculated
         adata_integrated.obs[batch_key] = adata_integrated.obs[batch_key].astype("category")
         adata_integrated.obs[label_key] = adata_integrated.obs[label_key].astype("category")
-        sc.tl.pca(adata_integrated, layer="data") # anndataR::write_h5ad() writes the default assay of the seurat object (which was "integrated") to the "data" layer
+        sc.tl.pca(adata_integrated, layer="data") # anndataR::write_h5ad() writes the default assay of the seurat object (which was "integrated") to the "data" layer. This is the log-normalized data.
         
         adata_integrated.obsm["X_emb"] = adata_integrated.obsm['X_pca']
     

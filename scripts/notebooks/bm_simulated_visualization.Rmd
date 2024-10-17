@@ -1,0 +1,168 @@
+---
+title: "bm_simulated_visualization"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 10)
+knitr::opts_chunk$set(fig.width = 14)
+```
+
+```{r}
+.libPaths(.Library)
+library(tidyverse)
+
+```
+
+```{r}
+library(Seurat)
+library(anndataR)
+library(bigstatsr)
+# devtools::load_all("../../anglemania")
+library(matrixStats)
+```
+
+
+# Load metrics
+```{r}
+metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/metrics/combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+head(metrics)
+colnames(metrics)
+samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet.tsv", sep = "\t", stringsAsFactors = FALSE)
+samplesheet <- samplesheet %>%
+  filter(ngroup <= 4, nbatch <= 5)
+colnames(samplesheet)
+
+metrics <- metrics %>%
+  left_join(samplesheet %>% select(-original_h5ad), by = join_by(sample == sample_name))
+
+# metrics["Batch"] = metrics[["ASW_label/batch", "PCR_batch", "graph_conn"]].mean(axis=1)
+# metrics["Bio"] = metrics[["ASW_label", "isolated_label_silhouette"]].mean(axis=1)
+bio_metrics <- c("cLISI", "ARI_cluster.label", "NMI_cluster.label", "ASW_label", "isolated_label_F1", "isolated_label_silhouette")
+batch_metrics <- c("kBET", "ASW_label.batch", "iLISI")
+
+# calculate weighted mean with 0.6 for bio and 0.4 for batch
+# first min max scale every metrics
+#metrics_scaled = (metrics - metrics.min()) / (metrics.max() - metrics.min())
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+
+metrics_scaled <- metrics %>%
+  # scale data
+  mutate(across(all_of(bio_metrics), ~ min_max_norm(.) %>% as.vector), .by = integration_method) %>%
+  mutate(across(all_of(batch_metrics), ~ min_max_norm(.) %>% as.vector), .by = integration_method) %>%
+  rowwise() %>%
+  mutate(
+    bio_score = mean(c_across(all_of(bio_metrics))),
+    batch_score = mean(c_across(all_of(batch_metrics))),
+    overall_score = 0.6 * bio_score + 0.4 * batch_score
+  ) %>%
+  ungroup()
+
+View(metrics_scaled)
+colnames(metrics_scaled)
+```
+
+
+```{r}
+
+p <- metrics_scaled %>% 
+  ggplot(aes(x = batch.facLoc, y = de.facLoc))+
+  geom_tile(aes(fill = overall_score))+
+  facet_wrap(~gene_selection+integration_method)
+p
+
+p <- metrics_scaled %>% 
+  ggplot(aes(x = de.facLoc, y = overall_score))+
+  geom_point(aes(color = batch.facLoc, shape = gene_selection))+
+  facet_wrap(~gene_selection+integration_method)
+p
+
+dodge <- position_dodge(width = 0.8)
+
+for (i in unique(metrics_scaled$ngroup)) {
+  for (j in unique(metrics_scaled$nbatch)) {
+    print(metrics_scaled %>% 
+      filter(ngroup == i, nbatch == j) %>%
+      ggplot(aes(x = as.factor(de.facLoc), y = overall_score))+
+      # geom_point(aes(color = batch.facLoc, shape = gene_selection))+
+        geom_violin(aes(fill = as.factor(gene_selection)), position = dodge)+
+        geom_boxplot(width = 0.2, position = dodge,  aes(fill = as.factor(gene_selection))) +
+        facet_wrap(~integration_method, ncol = 1)+
+        ggtitle(paste0("ngroup: ", i, ", nbatch: ", j)))
+
+  }
+}
+
+p <- metrics_scaled %>% 
+  ggplot(aes(x = as.factor(de.facLoc), y = overall_score))+
+  geom_violin(aes(fill = gene_selection), position = dodge)+
+  geom_boxplot(width = 0.1, aes(fill = gene_selection), position = dodge) +
+  facet_wrap(~integration_method, ncol = 1)+
+  theme(legend.position = "none")
+p
+```
+
+```{r}
+dodge <- position_dodge(width = 0.7)
+p <- metrics_scaled %>% 
+  filter(integration_method == "scvi",
+         ngroup ==2,
+         nbatch == 5)%>%
+  ggplot(aes(x = as.factor(de.facLoc), y = overall_score))+
+  # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
+  geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
+  geom_jitter(aes(fill = gene_selection), position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
+  # make manual color
+  # scale_color_brewer(palette = "Paired") +  # "Paired" is a good palette for qualitative factors
+  theme_bw()+
+  labs(x = "Biological Variability", y = "Integration Score") +
+  #increase font size of all text
+  theme(text = element_text(size = 30, face = "bold"),
+  aspect.ratio = 1,
+  legend.position = c(0.7,0.2))
+p
+
+```
+
+```{r}
+unique(metrics_scaled$integration_method)
+# plot batch.facLoc against the overall_score
+p <- metrics_scaled %>% 
+  filter(integration_method == "scvi",
+         ngroup ==2,
+         nbatch == 5)%>%
+  ggplot(aes(x = as.factor(batch.facLoc), y = overall_score))+
+    geom_point()+
+    facet_wrap(~gene_selection+de.facLoc)
+
+p
+```
+
+```{r}
+metrics_scaled %>%
+  ggplot(aes(x = facloc_batch, y = bio_score))+
+  geom_line(aes(color = gene_selection))+
+  facet_wrap(~facloc_bio) +
+  ggtitle(paste0("Overall integration score split by biological variability. Integration method: ", unique(metrics_scaled$integration_method)))
+
+metrics_scaled %>%
+  ggplot(aes(x = facloc_batch, y = batch_score))+
+  geom_line(aes(color = gene_selection))+
+  facet_wrap(~facloc_bio) +
+  ggtitle(paste0("Overall integration score split by biological variability. Integration method: ", unique(metrics_scaled$integration_method)))
+```
+
