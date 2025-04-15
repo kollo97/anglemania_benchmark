@@ -20,7 +20,7 @@ option_list <- list(
                             type = "character",
                             help="batch key specifying a column in the metadata that divides the batches"),
     make_option(c("-d", "--dataset_key"),
-                            default="Dataset",
+                            default=NA,
                             type = "character",
                             help="dataset key specifying a column in the metadata that divides the datasets"),
     make_option(c("-g", "--gene_selection"),
@@ -28,13 +28,17 @@ option_list <- list(
                             type = "character",
                             help="gene selection method. One of ['hvg', 'angl', 'full', 'rand']"),
     make_option(c("-m", "--anglemania_mode"),
-                            default="pearson",
+                            default="cosine",
                             type = "character",
-                            help="mode for creating the similarity matrix in anglemania. One of ['pearson', 'spearman', 'diem']"),
-    make_option(c("-t", "--anglemania_threshold"),
-                            default=2.0,
+                            help="mode for creating the similarity matrix in anglemania. One of ['cosine', 'spearman', 'diem']"),
+    make_option(c("-s", "--zscore_snr_threshold"),
+                            default=2.5,
                             type = "double",
-                            help="threshold for the mean zscore and signal-to-noise ratio. Default is 2.0")
+                            help="threshold for the signal-to-noise ratio. Default is 2.5"),
+    make_option(c("-z", "--zscore_mean_threshold"),
+                            default = 2.5,
+                            type = "double",
+                            help = "threshold for the mean zscore. Default is 2.5")
 )
 parser <- OptionParser(option_list = option_list)
 args <- parse_args(parser)
@@ -42,12 +46,8 @@ args <- parse_args(parser)
 suppressPackageStartupMessages({
     library(Seurat)
     library(anndataR)
-    # options(Seurat.object.assay.version = "v3")
-    library(schard)
-    library(reticulate)
-    use_condaenv(condaenv = "/home/akollot/miniforge3/envs/angl_BM2/bin/python", conda = "/home/akollot/miniforge3/envs/angl_BM2/bin/python")
+    library(anglemania)
 })
-devtools::load_all("/home/akollot/projects/CRC1588/dataset_integration/anglemania/")
 
 #------------------------------------------------------------------------------#
 # CHECK INPUTS
@@ -78,7 +78,8 @@ if (!(args$gene_selection %in% c("hvg", "angl", "full", "rand"))) {
 
 # Load data
 message(paste0("Processing ", args$infile, " with batch key ", args$batch_key))
-se <- anndataR::read_h5ad(args$infile, to = "Seurat", mode = "r")
+se <- anndataR::read_h5ad(args$infile)
+se <- se$to_Seurat()
 se
 
 if (!(args$batch_key %in% colnames(se[[]]))) {
@@ -99,18 +100,18 @@ if (args$gene_selection == "hvg") {
 } else if (args$gene_selection == "angl") {
 
     # Create seurat object with only anglemania genes
-    angl <- create_anglem(se,
+    angl <- create_anglemania_object(se,
                           batch_key = args$batch_key,
                           dataset_key = args$dataset_key,
                           min_cells_per_gene = 1)
 
-    angl <- big_anglemanise(angl,
-                            zscore_mean_threshold = args$anglemania_threshold,
-                            zscore_sn_threshold  = args$anglemania_threshold,
+    angl <- anglemania(angl,
+                            zscore_mean_threshold = args$zscore_mean_threshold,
+                            zscore_sn_threshold  = args$zscore_snr_threshold,
                             max_n_genes = 2000,
-                            method = args$anglemania_mode) # "pearson", "spearman" or "diem"
+                            method = args$anglemania_mode) # "cosine", "spearman"
 
-    angl_genes <- extract_integration_genes(angl)
+    angl_genes <- get_anglemania_genes(angl)
     angl_genes <- data.frame(hgnc_symbol = angl_genes, row.names = names(angl_genes))
     write.table(angl_genes, args$outfile, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 

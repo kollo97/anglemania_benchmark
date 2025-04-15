@@ -1,0 +1,468 @@
+---
+title: "compare_genes"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 10)
+knitr::opts_chunk$set(fig.width = 14)
+options(Seurat.object.assay.version = "v5")
+```
+
+
+
+```{r, load libraries}
+.libPaths(.Library)
+.libPaths()
+library(tidyverse)
+library(ComplexHeatmap)
+library(pbapply)
+library(rhdf5)
+library(httpgd)
+library(plotly)
+library(jsonlite)
+```
+
+
+```{r}
+gene_files <- list.files("/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/preprocessed", full.names = TRUE)
+samplesheet_normalCells <- fromJSON("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/samplesheet.json") %>% as_tibble()
+samplesheet_SEACells <- fromJSON("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/SEACells/merged_seacell_data/samplesheet.json") %>% as_tibble()
+samplesheet <- samplesheet_SEACells %>%
+  bind_rows(samplesheet_normalCells) %>%
+  mutate(sim_type = ifelse(grepl("_merged_seacell", sample_name), "metacells", "normalCells"))
+
+find_matching_files <- function(sample_name, files) {
+  matching_files <- grep(sample_name, files, value = TRUE)
+  # matching_files <- ifelse(grepl("_merged_seacell", sample_name), matching_files, matching_files[!grepl("_merged_seacell", matching_files)])
+  return(matching_files)
+}
+
+identify_gene_selections <- function(file_name) {
+    if (grepl("_full.tsv", file_name)) {
+        return("full")
+    } else if (grepl("_hvg.tsv", file_name)) {
+        return("hvg")
+    } else if (grepl("_rand.tsv", file_name)) {
+        return("rand")
+    } else if (grepl("_angl.tsv", file_name)) {
+        return("angl")
+    }
+}
+
+expanded <- samplesheet %>%
+  rowwise() %>%
+  mutate(tsv_files = list(find_matching_files(sample_name, gene_files))) %>%
+  tidyr::unnest(tsv_files) %>%
+  rowwise() %>%
+  mutate(
+    gene_selection = identify_gene_selections(tsv_files),
+    gene_selection = factor(gene_selection, levels = c("full", "hvg", "rand", "angl"))
+  ) %>%
+ filter(
+    !(sim_type == "normalCells" & str_detect(tsv_files, "_merged_seacell"))
+  ) %>%
+  ungroup()
+View(expanded)
+```
+
+```{r}
+outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/compare_gene_selections_dropout"
+```
+
+
+# check overlap of anglemania genes to HVGs as a function of the dropout.mid parameter of splatter
+```{r}
+result <- expanded %>%
+  filter(gene_selection %in% c("hvg", "angl")) %>%
+  group_by(sample_name) %>%
+  mutate(group_size = n()) %>%
+         filter(group_size > 1)
+
+result <- result %>%
+  pivot_wider(names_from = gene_selection, values_from = tsv_files) %>%
+  rowwise() %>%
+  mutate(angl = list(read.csv(angl, sep = "\t", header = T) %>% pull(hgnc_symbol)),
+         hvg = list(read.csv(hvg, sep = "\t", header = T) %>% pull(hgnc_symbol)))
+
+unique(sapply(result$angl, length))
+
+for_plot <- result %>%
+  rowwise() %>%
+  mutate(intersection = list(intersect(angl, hvg)),
+    intersection_size = length(intersection),
+    intersection_size_perc = intersection_size / length(angl)*100) %>% 
+    select(-angl, -hvg) 
+
+```
+
+```{r}
+for_plot %>%
+  filter(sim == "sim2") %>%
+  ggplot(aes(x = as.factor(dropout.mid), y = intersection_size_perc)) +
+  geom_point(aes(color = sim_type), size = 5) +
+  labs(x = "strength of the dropout", y = "intersection of HVG and anglemania genes [%]", title = "overlap of anglemania genes to HVGs as a function of the dropout.mid parameter of splatter") +
+  theme(text = element_text(size = 20, face = "bold"))
+```
+
+# check overlap of genes from the same gene selection but comparing metacells to normal cells
+```{r}
+result <- expanded %>%
+  select(-c(parent_sample_path, parent_sample, merged_seacell_sparsity)) %>%
+  filter(gene_selection %in% c("hvg", "angl")) %>%
+  filter(sim == "sim2") %>%
+  group_by(sample_name) %>%
+  mutate(sample_name = gsub("_merged_seacell", "", sample_name)) %>%
+  pivot_wider(names_from = sim_type, values_from = c(tsv_files, file_path)) %>%
+  rowwise() %>%
+  mutate(
+    tsv_files_metacells = ifelse(is.na(tsv_files_metacells), NA, list(read.csv(tsv_files_metacells, sep = "\t", header = T) %>% pull(hgnc_symbol))),
+    tsv_files_normalCells = ifelse(is.na(tsv_files_normalCells), NA, list(read.csv(tsv_files_normalCells, sep = "\t", header = T) %>% pull(hgnc_symbol)))
+  ) %>%
+  ungroup() %>%
+  mutate(tsv_files_metacells = lapply(tsv_files_metacells, function(x) gsub("Gene", "", x)), 
+         tsv_files_normalCells = lapply(tsv_files_normalCells, function(x) gsub("Gene", "", x)))
+
+unique(sapply(result$angl, length))
+
+for_plot <- result %>%
+  rowwise() %>%
+  mutate(
+    intersection = list(intersect(tsv_files_metacells, tsv_files_normalCells)),
+    intersection_size = length(intersection),
+    intersection_size_perc = intersection_size / length(tsv_files_metacells) * 100,
+    n_genes_metacells = length(tsv_files_metacells)
+  ) %>%
+  select(-tsv_files_metacells, -tsv_files_normalCells)
+```
+
+```{r}
+for_plot %>%
+  ggplot(aes(x = as.factor(dropout.mid), y = intersection_size_perc)) +
+  geom_bar(aes(fill = n_genes_metacells), stat = "identity") +
+  facet_wrap(~gene_selection) +
+  labs(x = "strength of the dropout", y = "intersection of genes selected from metacells vs normal cells [%]", title = "overlap of genes selected from metacells vs normal cells") +
+  theme(text = element_text(size = 15, face = "bold"), axis.text.x = element_text(size = 10))
+```
+
+
+# make score for each gene that describes the bio to batch variability ratio
+```{r}
+library(scales)
+get_rowData <- function(sim_h5ad_path){
+  df <- h5read(sim_h5ad_path, "/var") %>% as.data.frame() %>% column_to_rownames("X_index")
+  return(df)
+}
+
+get_BTVR <- function(rowdata) {
+  # Calculate BioVar and TechVar using vectorized operations
+  bio_var_cols <- select(rowdata, starts_with("DEFacGroup"))
+  tech_var_cols <- select(rowdata, starts_with("BatchFacBatch"))
+  
+  # Use apply function to compute variances row-wise
+  BioVar <- apply(bio_var_cols, 1, var)
+  BioVar[BioVar > 0] <- BioVar[BioVar > 0] %>% log() %>% rescale()
+  TechVar <- apply(tech_var_cols, 1, var) %>% log() %>% rescale()
+  
+  # Compute BTVR directly
+  BTVR <- BioVar/TechVar
+  
+  # Create result tibble
+  summary_df <- tibble(
+    gene = rownames(rowdata),
+    BTVR = BTVR,
+    BioVar = BioVar,
+    TechVar = TechVar
+  )
+  
+  return(summary_df)
+}
+```
+
+
+```{r}
+btvr <- expanded %>%
+  filter(gene_selection %in% c("hvg", "angl")) %>%
+  group_by(sample_name) %>%
+  mutate(group_size = n()) %>%
+         filter(group_size > 1) %>% # make sure to only include the samples that have both the angl and hvg genes already calculated (snakemake pipeline preprocess)
+  pivot_wider(names_from = gene_selection, values_from = tsv_files)
+
+# construct nested tibble but don't use tidyverse cause it's freaking slow
+rowdatas <- pblapply(btvr$original_h5ad, get_rowData, cl = 20)
+h5closeAll()
+BTVR <- pblapply(rowdatas, get_BTVR, cl = 20)
+angl <- pblapply(btvr$angl, function(x) {
+  genes <- read.csv(x, sep = "\t", header = T) %>% pull(hgnc_symbol)
+  }, cl = 20)
+hvg <- pblapply(btvr$hvg, function(x) {
+  genes <- read.csv(x, sep = "\t", header = T) %>% pull(hgnc_symbol)
+  }, cl = 20)
+
+btvr$BTVR <- BTVR
+btvr$angl <- angl
+btvr$hvg <- hvg
+
+btvr_raw <- btvr 
+```
+
+```{r}
+
+btvr <- btvr_raw %>% 
+  mutate(btvr_dist = pmap(
+list(angl, hvg, BTVR),
+      ~ { genes <- unique(c(..1, ..2))
+        # Create a tibble for genes with their BTVR values
+        merged_tbl <- ..3 %>%
+          filter(gene %in% genes) %>%
+          mutate(
+            angl = gene %in% ..1,
+            hvg = gene %in% ..2
+          )
+        # Return the new tibble
+        merged_tbl} )) 
+
+btvr <- btvr %>%
+  rowwise() %>%
+  mutate(btvr_dist = list(btvr_dist %>% pivot_longer(cols = c(angl, hvg), 
+    names_to = "gene_selection", 
+    values_to = "is_selected") %>% filter(is_selected)))
+
+for (i in 1:10){
+  plot_df <- btvr[i, ]
+  print(plot_df)
+  # print(plot_df$btvr_dist)
+  print(plot_df$btvr_dist %>%
+    as.data.frame() %>%
+    ggplot(aes(gene_selection, BTVR))+
+    geom_violin(aes(fill = gene_selection))+
+    ggtitle(paste0("Bio to Technical variability ratio. de.facLoc: ", plot_df$de.facLoc, " batch.facLoc: ", plot_df$batch.facLoc)))
+}
+
+```
+
+
+* anglemania genes have a much higher BTVR (bio to technical variability) => this is great!
+```{r}
+
+unnested <- btvr %>%
+  select(-BTVR, -angl, -hvg) %>%
+  unnest(btvr_dist) %>%
+  ungroup() %>%
+  filter(!is.infinite(BTVR)) # there was one gene (!) that had 0 TechVar so BTVR was infinite, but really only 1 gene lol.
+head(unnested)
+# unnested %>%
+#   ggplot()
+unnested %>%
+  distinct(ngroup, nbatch)
+
+# Summarize the data and pivot to wide format
+summary_df_BTVR <- unnested %>%
+  group_by(gene_selection, batch.facLoc, de.facLoc) %>%
+  summarise(
+    mean = mean(BTVR, na.rm = TRUE),
+    median = median(BTVR, na.rm = TRUE),
+    sd = sd(BTVR, na.rm = TRUE),
+    n = n(),
+    .groups = 'drop'  # Avoid unnecessary grouping
+  ) 
+
+
+```
+
+
+```{r}
+# Plot heatmap
+new_labels <- c("angl" = "anglemania genes", "hvg" = "highly variable genes")
+size <- 1-6e-4
+ggplot(summary_df_BTVR, aes(x = as.factor(batch.facLoc), y = as.factor(de.facLoc), fill = mean)) +
+  geom_tile(width = size, height = size) +
+  coord_equal() +
+  facet_wrap(~gene_selection, labeller = labeller(gene_selection = new_labels)) +  # Facet by gene_selection
+  scale_fill_gradient(low = "grey", high = "purple", limits = c(0, 1.1)) +
+  # scale_fill_continuous(type = "viridis", limits = c(0, 1.1)) +
+  labs(title = "Heatmap of MEAN BTVR by Batch and Biological Variability",
+       x = "Strength of Technical Noise (batch.facLoc)",
+       y = "Biological Variability (de.facLoc)",
+       fill = "Mean BTVR") +
+  theme_minimal() +
+    theme(
+      text = element_text(size = 15, face = "bold"),
+      axis.title = element_text(size = 20),
+      strip.text = element_text(size = 20)
+    )
+ggsave(
+  "/home/akollot/projects/CRC1588/dataset_integration/anglemania_manuscript/plots/mean_BTVR_heatmap.pdf",
+  width = 10,
+  height = 8
+)
+```
+
+
+```{r}
+size <- 1 - 6e-4
+ggplot(summary_df_BTVR, aes(x = as.factor(batch.facLoc), y = as.factor(de.facLoc), fill = median)) +
+  geom_tile(width = size, height = size) +
+  coord_equal() +
+  facet_wrap(~gene_selection, labeller = labeller(gene_selection = new_labels)) +  # Facet by gene_selection
+  scale_fill_gradient(low = "grey", high = "purple", limits = c(0, 1.1)) +
+  labs(
+    title = "Heatmap of MEDIAN BTVR by Batch and Biological Variability",
+    x = "Strength of Technical Noise (batch.facLoc)",
+    y = "Biological Variability (de.facLoc)",
+    fill = "Median BTVR"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 15, face = "bold"),
+    axis.title = element_text(size = 20),
+    # increase facet label size
+    strip.text = element_text(size = 20)
+  )
+ggsave(
+  "/home/akollot/projects/CRC1588/dataset_integration/anglemania_manuscript/plots/median_BTVR_heatmap.pdf",
+  width = 10,
+  height = 8
+)
+
+```
+
+* it looks like the higher BTVR is due to the fact that angelmania captures genes with high biological variability!
+```{r}
+summary_df_BioVar <- unnested %>%
+  group_by(gene_selection, batch.facLoc, de.facLoc) %>%
+  summarise(
+    mean = mean(BioVar, na.rm = TRUE),
+    median = median(BioVar, na.rm = TRUE),
+    sd = sd(BioVar, na.rm = TRUE),
+    n = n(),
+    .groups = 'drop'  # Avoid unnecessary grouping
+  ) 
+
+
+ggplot(summary_df_BioVar, aes(x = batch.facLoc, y = de.facLoc, fill = mean)) +
+  geom_tile() +
+  facet_wrap(~gene_selection) +  # Facet by gene_selection
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Heatmap of MEAN BioVar by Batch and Biological Variability",
+       x = "Batch Factor Level (batch.facLoc)",
+       y = "Biological Variability (de.facLoc)",
+       fill = "Mean BioVar") +
+  theme_minimal()
+
+
+ggplot(summary_df_BioVar, aes(x = batch.facLoc, y = de.facLoc, fill = median)) +
+  geom_tile() +
+  facet_wrap(~gene_selection) +  # Facet by gene_selection
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Heatmap of MEDIAN BioVar by Batch and Biological Variability",
+       x = "Batch Factor Level (batch.facLoc)",
+       y = "Biological Variability (de.facLoc)",
+       fill = "Median BioVar") +
+  theme_minimal()
+
+```
+
+* However it still captures genes with high technical variability, just like HVGs, with increasing Technical Variability / Batch effects
+```{r}
+summary_df_TechVar <- unnested %>%
+  group_by(gene_selection, batch.facLoc, de.facLoc) %>%
+  summarise(
+    mean = mean(TechVar, na.rm = TRUE),
+    median = median(TechVar, na.rm = TRUE),
+    sd = sd(TechVar, na.rm = TRUE),
+    n = n(),
+    .groups = 'drop'  # Avoid unnecessary grouping
+  ) 
+
+
+ggplot(summary_df_TechVar, aes(x = batch.facLoc, y = de.facLoc, fill = mean)) +
+  geom_tile() +
+  facet_wrap(~gene_selection) +  # Facet by gene_selection
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Heatmap of MEAN TechVar by Batch and Biological Variability",
+       x = "Batch Factor Level (batch.facLoc)",
+       y = "Biological Variability (de.facLoc)",
+       fill = "Mean TechVar") +
+  theme_minimal()
+
+
+ggplot(summary_df_TechVar, aes(x = batch.facLoc, y = de.facLoc, fill = median)) +
+  geom_tile() +
+  facet_wrap(~gene_selection) +  # Facet by gene_selection
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Heatmap of MEDIAN TechVar by Batch and Biological Variability",
+       x = "Batch Factor Level (batch.facLoc)",
+       y = "Biological Variability (de.facLoc)",
+       fill = "Median TechVar") +
+  theme_minimal()
+
+```
+
+```{r}
+test <- rowdatas[[1]]
+View(test)
+```
+
+
+
+
+# Download button
+```{js, echo=FALSE}
+document.addEventListener('DOMContentLoaded', function() {
+  var images = document.querySelectorAll('img');
+  images.forEach(function(img, index) {
+    var button = document.createElement('button');
+    button.textContent = 'Download as PDF';
+    button.style = 'display: block; margin-top: 10px;';
+
+    button.onclick = function() {
+      var jsPDF = document.createElement('script');
+      jsPDF.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.3.1/jspdf.umd.min.js';
+      jsPDF.onload = function() {
+        var { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+          orientation: 'portrait',
+          unit: 'pt',
+          format: 'a4'
+        });
+
+        var imgEl = new Image();
+        imgEl.onload = function() {
+          // Calculate scale ratio to fit the image within the page
+          var scaleWidth = 595 / this.width;
+          var scaleHeight = 842 / this.height;
+          var scale = Math.min(scaleWidth, scaleHeight);
+
+          // Calculate dimensions to maintain aspect ratio
+          var imgWidth = this.width * scale;
+          var imgHeight = this.height * scale;
+
+          // Position the image centered horizontally and vertically
+          var xPos = (595 - imgWidth) / 2;
+          var yPos = (842 - imgHeight) / 2;
+
+          doc.addImage(this, 'PNG', xPos, yPos, imgWidth, imgHeight);
+          doc.save('download-' + index + '.pdf');
+        };
+        imgEl.crossOrigin = "Anonymous";
+        imgEl.src = img.src;
+      };
+      document.body.appendChild(jsPDF);
+    };
+
+    img.parentNode.insertBefore(button, img.nextSibling);
+  });
+});
+```

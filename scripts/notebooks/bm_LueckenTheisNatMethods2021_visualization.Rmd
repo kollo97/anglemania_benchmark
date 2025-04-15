@@ -21,12 +21,9 @@ knitr::opts_chunk$set(fig.width = 14)
 ```
 
 ```{r}
+outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_LueckenTheisNatMethods2021_visualization"
 .libPaths(.Library)
 library(tidyverse)
-
-```
-
-```{r}
 library(Seurat)
 library(anndataR)
 # devtools::load_all("../../anglemania")
@@ -73,25 +70,69 @@ View(metrics_scaled)
 colnames(metrics_scaled)
 ```
 
-
+# Plot
+## combined bar plot
 ```{r}
 dodge <- position_dodge(width = 0.7)
 
 p <- metrics_scaled %>% 
   ggplot(aes(x = as.factor(gene_selection), y = overall_score))+
-  geom_point(aes(color = gene_selection), size = 6)+
-  facet_wrap(~integration_method+sample, ncol = 6)+
-  theme(legend.position = "none")
-p
-```
-
-```{r}
-dodge <- position_dodge(width = 0.7)
-
-p <- metrics_scaled %>% 
-  ggplot(aes(x = bio_score, y = batch_score))+
-  geom_point(aes(color = gene_selection), size = 6)+
+  geom_bar(aes(fill = gene_selection), stat = "identity")+
   facet_wrap(~integration_method+sample, ncol = 6)
 p
 ```
+
+## individual bar plot
+```{r}
+for (m in unique(metrics_scaled$integration_method)){
+  for(s in unique(metrics_scaled$sample)){
+    p <- metrics_scaled %>%
+      filter(integration_method == m, sample == s) %>%
+      ggplot(aes(x = as.factor(gene_selection), y = overall_score)) +
+      geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+      scale_y_continuous(limits = c(0, 1)) +
+      theme_minimal() +
+      theme(
+        text = element_text(size = 20, face = "bold"),
+        axis.text.x = element_text(size = 15),
+        plot.title = element_text(size = 10),
+        legend.position = "none"
+      ) +
+      labs(x = "Gene Selection", y = "Integration Score", title = paste0("integration method:", m, "\nsample: ", s))
+
+    print(p)
+    ggsave(
+      file = file.path(outplot, paste0("gene_selection_vs_integration_score_", m, "_", s, ".pdf")),
+      width = 11,
+      height = 10,
+      units = "cm")
+  }
+}
+```
+
+
+# plot cell type distributions per batch
+* for sim2
+```{r}
+sim2_path <- samplesheet %>%
+  filter(sample_name == "sim2_raw") %>%
+  pull(file_path)
+sim2 <- read_h5ad(sim2_path, to = "SingleCellExperiment")
+sim2
+library(SingleCellExperiment)
+meta <- sim2@colData %>% as.data.frame()
+colnames(meta)
+meta %>%
+  summarize(n = n(), .by = c(SubBatch, celltype)) %>%
+  ggplot(aes(x = SubBatch, y = n, fill = celltype)) +
+  geom_col(position = "stack")
+
+meta %>%
+  summarize(n = n(), .by = c(SubBatch, celltype)) %>%
+  ggplot(aes(x = celltype, y = n, fill = SubBatch)) +
+  geom_col(position = "stack")
+
+```
+
+
 

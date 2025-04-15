@@ -3,7 +3,7 @@
 # if tcells_hao_pbmc_hvg.tsv does not exist
 # run
 gene_selection="angl"
-anglemania_mode="pearson"
+anglemania_mode="cosine"
 samplename="cd4_tcells"
 angl_threshold=2
 out_dir="/data/akalin/akollot/anglemania_benchmark/results/Hao_Satija_Cell_2021_PBMC/tcells/cd4/"

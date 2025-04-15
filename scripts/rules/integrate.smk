@@ -15,7 +15,7 @@ rule integrate:
         """
         export JAX_PLATFORMS=cpu
         if [[ "{wildcards.integration_method}" = "harmony" || "{wildcards.integration_method}" = "scvi" || "{wildcards.integration_method}" = "scanvi" || "{wildcards.integration_method}" = "scanorama" ]]; then
-            python3 integration.py \
+            python3 pipeline_scripts/integration.py \
                 --infile={input.original_h5ad} \
                 --feature_subset={input.feature_subset} \
                 --outfile={output.integrated} \

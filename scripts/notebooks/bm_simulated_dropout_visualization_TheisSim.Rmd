@@ -1,0 +1,302 @@
+---
+title: "bm_simulated_visualization"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 10)
+knitr::opts_chunk$set(fig.width = 14)
+```
+
+
+
+```{r}
+.libPaths(.Library)
+library(tidyverse)
+library(Seurat)
+library(anndataR)
+library(bigstatsr)
+# devtools::load_all("../../anglemania")
+library(matrixStats)
+library(jsonlite)
+library(httpgd)
+library(pbapply)
+```
+
+# SEACells sparsity was not calculated yet
+```{r}
+load_and_calc_sparsity <- function(file_path) {
+  adata <- read_h5ad(file_path)
+  counts <- adata$X
+  total_elements <- nrow(counts) * ncol(counts)
+  sparsity <- sum(counts == 0) / total_elements
+  return(round(sparsity, 4)*100)
+}
+```
+
+# Load metrics
+```{r}
+# load metrics
+metrics_sim1 <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/metrics/sim1_combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+metrics_sim2 <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/metrics/sim2_combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+metrics_sim2_seacells <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/metrics/sim2_seacells_combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+metrics <- rbind(metrics_sim1, metrics_sim2, metrics_sim2_seacells)
+
+# load samplesheets
+## normalCells contains info on both sim1 and sim2
+samplesheet_normalCells <- fromJSON("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/samplesheet.json", simplifyDataFrame = TRUE, flatten = TRUE) %>% as_tibble()
+
+samplesheet_normalCells
+samplesheet_normalCells <- samplesheet_normalCells %>%
+  mutate(sim_type = "normalCells") 
+samplesheet_SEACells <- fromJSON("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/SEACells/merged_seacell_data/samplesheet.json", simplifyDataFrame = TRUE, flatten = TRUE) %>% as_tibble()
+samplesheet_SEACells <- samplesheet_SEACells %>%
+  mutate(
+    sim_type = "metacells"
+  )
+samplesheet_SEACells$sparsity <- pblapply(samplesheet_SEACells$file_path, load_and_calc_sparsity, cl = 10)
+shared_cols <- intersect(colnames(samplesheet_normalCells), colnames(samplesheet_SEACells))
+
+merged_samplesheet <- samplesheet_SEACells %>%
+  # select(all_of(shared_cols)) %>%
+  mutate(sparsity = as.numeric(sparsity)) %>%
+  bind_rows(samplesheet_normalCells)
+
+# join metrics to samplesheet
+metrics <- metrics %>%
+  left_join(merged_samplesheet, by = join_by(sample == sample_name))
+# metrics["Batch"] = metrics[["ASW_label/batch", "PCR_batch", "graph_conn"]].mean(axis=1)
+# metrics["Bio"] = metrics[["ASW_label", "isolated_label_silhouette"]].mean(axis=1)
+bio_metrics <- c("cLISI", "ARI_cluster.label", "NMI_cluster.label", "ASW_label", "isolated_label_F1", "isolated_label_silhouette")
+batch_metrics <- c("kBET", "ASW_label.batch", "iLISI")
+
+# calculate weighted mean with 0.6 for bio and 0.4 for batch
+# first min max scale every metrics
+#metrics_scaled = (metrics - metrics.min()) / (metrics.max() - metrics.min())
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+z_score_norm <- function(x) {
+  (x - mean(x)) / sd(x)
+}
+
+metrics_scaled <- metrics %>%
+  # scale data
+  # mutate(across(all_of(bio_metrics), ~ z_score_norm(.) %>% as.vector), .by = c(sample, integration_method)) %>%
+  # mutate(across(all_of(batch_metrics), ~ z_score_norm(.) %>% as.vector), .by = c(sample, integration_method)) %>%
+  rowwise() %>%
+  mutate(
+    bio_score = mean(c_across(all_of(bio_metrics))),
+    batch_score = mean(c_across(all_of(batch_metrics))),
+    overall_score = 0.6 * bio_score + 0.4 * batch_score
+  ) %>%
+  ungroup()
+
+View(metrics_scaled)
+colnames(metrics_scaled)
+```
+
+```{r}
+outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_simulated_dropout_visualization_TheisSim/"
+```
+
+```{r}
+unique(metrics_scaled$sim_type)
+metrics_scaled %>%
+  ggplot(aes(x = as.factor(dropout.mid), y = round(sparsity))) +
+  geom_point(aes(color = sim_type, shape = sim), size = 2) +
+  labs(x = "Initial Splatter dropout.mid factor", y = "Sparsity", title = "Splatter dropout.mid vs. Sparsity") +
+  theme(text = element_text(size = 10, face = "bold"))
+
+ggsave(
+  file = file.path(outplot, "change of sparsity in normal vs metacells with increasing dropout.mid.pdf"),
+  width = 15,
+  height = 10,
+  units = "cm"
+)
+```
+
+
+# Plotting
+## Sim 1
+### combined plot
+```{r}
+p <- metrics_scaled %>%
+  filter(sim == "sim1", sim_type == "normalCells") %>%
+  mutate(sparsity = round(as.numeric(sparsity))) %>%
+  ggplot(aes(x = as.factor(sparsity), y = overall_score)) +
+  geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("hvg" = "grey", "angl" = "purple")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(~integration_method, ncol = 1) +
+  theme(text = element_text(size = 20, face = "bold")) +
+  labs(x = "Sparsity of the counts[%] ", y = "Integration Score", title = "Overall integration score split by sparsity of the count matrix. \nsim1")
+
+p
+```
+
+### individual plots
+```{r}
+for (m in unique(metrics_scaled$integration_method)) {
+    p <- metrics_scaled %>%
+      filter(sim == "sim1", sim_type == "normalCells", integration_method == m) %>%
+      mutate(sparsity = round(as.numeric(sparsity))) %>%
+      ggplot(aes(x = as.factor(sparsity), y = overall_score)) +
+        geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+        scale_fill_manual(values = c("hvg" = "grey", "angl" = "purple")) +
+        scale_y_continuous(limits = c(0, 1)) +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 20, face = "bold"),
+          axis.title.x = element_text(size = 16)) +
+        labs(x = "Sparsity of the counts [%]", y = "Integration Score", title = paste0("integration method: ", m, " - sim1"))
+    print(p)
+    ggsave(
+      file = file.path(outplot, paste0("sparsity_vs_integration_score_sim1_", m, ".pdf")),
+      width = 20,
+      height = 10,
+      units = "cm")
+}
+```
+
+
+## Sim 2
+### combined plot
+```{r}
+colnames(metrics_scaled)
+p <- metrics_scaled %>%
+  filter(sim == "sim2", sim_type == "normalCells") %>%
+  mutate(sparsity = round(as.numeric(sparsity))) %>%
+  ggplot(aes(x = as.factor(sparsity), y = overall_score)) +
+  geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("hvg" = "grey", "angl" = "purple")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(~ sim + integration_method, ncol = 1) +
+  theme(text = element_text(size = 20, face = "bold")) +
+  labs(x = "Sparsity of the counts[%] ", y = "Integration Score", title = "Overall integration score split by sparsity of the count matrix\n sim2")
+
+p
+```
+
+### individual plots
+```{r}
+for (m in unique(metrics_scaled$integration_method)) {
+  p <- metrics_scaled %>%
+    filter(sim == "sim2", sim_type == "normalCells", integration_method == m) %>%
+    mutate(sparsity = round(as.numeric(sparsity))) %>%
+    ggplot(aes(x = as.factor(sparsity), y = overall_score)) +
+    geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+    scale_fill_manual(values = c("hvg" = "grey", "angl" = "purple")) +
+    scale_y_continuous(limits = c(0, 1)) +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 20, face = "bold"),
+      axis.title.x = element_text(size = 16)
+    ) +
+      labs(x = "Sparsity of the counts [%]", y = "Integration Score", title = paste0("integration method: ", m, " - sim2"))
+  print(p)
+  ggsave(
+    file = file.path(outplot, paste0("sparsity_vs_integration_score_sim2_", m, ".pdf")),
+    width = 20,
+    height = 10,
+    units = "cm")
+}
+```
+
+## Sim 2 metacells
+### combined plot
+```{r}
+colnames(metrics_scaled)
+p <- metrics_scaled %>%
+  filter(sim == "sim2", sim_type == "metacells") %>%
+  mutate(sparsity = round(as.numeric(sparsity))) %>%
+  ggplot(aes(x = as.factor(sparsity), y = overall_score)) +
+  geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("hvg" = "grey", "angl" = "purple")) +
+  facet_wrap(~ sim + integration_method, ncol = 1) +
+  theme(text = element_text(size = 20, face = "bold")) +
+  labs(x = "Sparsity of the counts[%] ", y = "Integration Score", title = "Overall integration score split by sparsity of the count matrix\n sim2 metacells")
+
+p
+```
+
+### individual plots
+```{r}
+for (m in unique(metrics_scaled$integration_method)) {
+  p <- metrics_scaled %>%
+    filter(sim == "sim2", sim_type == "metacells", integration_method == m) %>%
+    mutate(sparsity = round(as.numeric(sparsity))) %>%
+    ggplot(aes(x = as.factor(sparsity), y = overall_score)) +
+    geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
+    scale_fill_manual(values = c("hvg" = "grey", "angl" = "purple")) +
+    scale_y_continuous(limits = c(0, 1)) +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 20, face = "bold"),
+      axis.title.x = element_text(size = 16)
+    )+ 
+    labs(x = "Sparsity of the counts [%]", y = "Integration Score", title = paste0("integration method: ", m, " - sim2 metacells"))
+
+  print(p)
+  ggsave(
+    file = file.path(outplot, paste0("sparsity_vs_integration_score_sim2_metacells_", m, ".pdf")),
+    width = 20,
+    height = 10,
+    units = "cm")
+}
+```
+
+## Comparison Sim 2 metacells vs normalCells
+```{r}
+p <- metrics_scaled %>%
+  filter(sim == "sim2") %>%
+  ggplot(aes(x = as.factor(round(dropout.mid, 1)), y = overall_score)) +
+  geom_bar(aes(fill = sim_type), stat = "identity", position = "dodge") +
+  facet_wrap(~ gene_selection + integration_method) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(size = 15)
+  )+
+  labs(x = "Initial Dropout.mid factor", y = "Integration Score", title = "Comparison Sim 2 metacells vs normalCells")
+p
+
+```
+
+```{r}
+for (m in unique(metrics_scaled$integration_method)) {
+  for (g in unique(metrics_scaled$gene_selection)) {
+    p <- metrics_scaled %>%
+      filter(sim == "sim2", gene_selection == g, integration_method == m) %>%
+      ggplot(aes(x = as.factor(round(dropout.mid, 1)), y = overall_score)) +
+      geom_bar(aes(fill = sim_type), stat = "identity", position = "dodge") +
+      scale_y_continuous(limits = c(0, 1)) +
+      theme_minimal() +
+      theme(
+        text = element_text(size = 20, face = "bold"),
+        axis.text.x = element_text(size = 15),
+        plot.title = element_text(size = 10)
+      )+
+      labs(x = "Initial Dropout.mid factor", y = "Integration Score", title = paste0("integration method: ", m, " - gene selection: ", g, " - sim2 metacells"))
+    print(p)
+    ggsave(
+      file = file.path(outplot, paste0("dropout.mid_vs_integration_score_sim2_metacells_", m, "_", g, ".pdf")),
+      width = 20,
+      height = 10,
+      units = "cm")
+  }
+}
+```

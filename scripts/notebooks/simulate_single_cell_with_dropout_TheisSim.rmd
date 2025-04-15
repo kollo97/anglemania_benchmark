@@ -1,0 +1,556 @@
+```{r}
+.libPaths(.Library)
+suppressPackageStartupMessages({
+    library(splatter)
+    library(stringr)
+    library(dplyr)
+    library(SPARSim)
+    library(tidyverse)
+    library(tibble)
+    library(jsonlite)
+    library(pbapply)
+    library(anndataR)
+})
+```
+
+
+# Sim 1
+## Sim 1 parameters and samplesheet
+```{r}
+outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout"
+
+fixed_params_sim1 <- list(
+    # Six batches with 10000 cells each. Needs to be more than we want in the
+    # final simulation.
+    batchCells = c(1000, 1000, 1000, 1000, 1000, 1000) * 10,
+    batch.facLoc = c(0.10, 0.15, 0.12, 0.18, 0.15, 0.25),
+    batch.facScale = c(0.10, 0.08, 0.12, 0.10, 0.12, 0.18),
+    group.prob = rep(1, 7) / 7,
+    # Differential expression by group
+    de.prob = c(0.10, 0.12, 0.08, 0.20, 0.12, 0.10, 0.16),
+    de.facLoc = c(0.10, 0.08, 0.12, 0.18, 0.06, 0.20, 0.14),
+    de.facScale = c(0.40, 0.30, 0.45, 0.48, 0.42, 0.38, 0.36)
+    # Seed
+)
+add_col_from_list <- function(tib, l) {
+    if (is.null(names(l))) {
+        stop("list must be named")
+    }
+    l <- lapply(l, function(x) list(x))
+    for (x in names(l)) {
+        tib <- tib %>% add_column(!!x := l[[x]])
+    }
+    return(tib)
+}
+
+samplesheet_sim1 <- tibble(
+    seed = 1,
+    lib.loc = 12,
+    dropout.type = "experiment",
+    dropout.shape = -5,
+    dropout.mid = seq(0.5, 3.5, length.out = 10)
+) 
+    
+samplesheet_sim1 <- add_col_from_list(samplesheet_sim1, fixed_params_sim1)
+samplesheet_sim1$sim <- "sim1"
+samplesheet_sim1$sample_name <- paste0(samplesheet_sim1$sim, "_DropoutSimulation_dropout.type", samplesheet_sim1$dropout.type, "_dropout.shape", abs(samplesheet_sim1$dropout.shape), "_dropout.mid", samplesheet_sim1$dropout.mid)
+samplesheet_sim1$file_path <- file.path(outdir, paste0(samplesheet_sim1$sample_name, ".h5ad"))
+
+# if dropout.type is "cells", dropout.mid and dropout.shape have 
+
+```
+
+## sample function from scib-reproducibility github
+```{r}
+#' Sample group proportions
+#'
+#' Downsample a Splat simulation to get the desired cell proportions
+#'
+#' @param sim SingleCellExperiment containing a Splat simulation
+#' @param batch_ncells Final number of cells in each batch
+#' @param batch_props Final cell proportions in each batch
+#'
+#' @return Downsampled SingleCellExperiment object
+sample_group_props <- function(sim, batch_ncells, batch_props) {
+    # Get the cell metadata
+    col_data <- as.data.frame(colData(sim))
+
+    # Get the current counts of each group in each batch
+    sim_batch_group_count <- table(col_data$Batch, col_data$Group)
+
+    # Get the final number of each group in each batch
+    batch_group_ncells <- lapply(seq_along(batch_ncells), function(idx) {
+        batch_ncells[idx] * batch_props[[idx]]
+    })
+
+    # Check that we aren't trying to get more cells than we have
+    lapply(seq_along(batch_group_ncells), function(idx) {
+        if (any(batch_group_ncells[[idx]] > sim_batch_group_count[idx, ])) {
+            stop("Not enough cells for these proportions in batch ", idx)
+        }
+    })
+
+    # Downsample cells
+    selected <- lapply(seq_along(batch_group_ncells), function(batch) {
+        group_cells <- batch_group_ncells[[batch]]
+        is_batch <- col_data$Batch == paste0("Batch", batch)
+        batch_groups <- col_data$Group[is_batch]
+        # Downsample batch
+        selected_batch <- sapply(seq_along(group_cells), function(group) {
+            is_group <- batch_groups == paste0("Group", group)
+            sample(col_data$Cell[is_batch][is_group], group_cells[group])
+        })
+        unlist(selected_batch)
+    })
+    selected <- as.character(unlist(selected))
+
+    # Subset SingleCellExperiment
+    sim[, selected]
+}
+```
+
+
+
+## Sim 1 functions 
+```{r}
+
+aslist2 <- function(tibble) {
+    l <- tibble %>% as.list()
+    l <- lapply(l, function(x) {
+        if (is.list(x)) {
+            unlist(x)
+        } else {
+            x
+        }
+    })
+    return(l)
+}
+
+perform_qc <- function(sim, batch_col="Batch"){
+
+    if (batch_col %in% colnames(colData(sim))) {
+        message("Calculating QC...")
+        sim <- scater::addPerCellQC(sim)
+        discard <- lapply(unique(colData(sim)[[batch_col]]), function(batch) {
+            in_batch <- colData(sim)[[batch_col]] == batch
+            scater::quickPerCellQC(colData(sim)[in_batch, ], nmads = 2)$discard
+        })
+        discard <- unlist(discard)
+        colData(sim)$Discard <- discard
+
+        message("Filtering cells...")
+        sim <- sim[, !discard]
+        message("Filtering genes...")
+        sim <- scater::addPerFeatureQC(sim)
+        is_exprs <- rowData(sim)$detected >= 0.01
+        sim <- sim[is_exprs, ]
+    } else {
+        stop(paste0(batch_col, " not found in colData(sim)"))
+    }
+
+    return(sim)
+}
+
+
+simulate_row_params_sim1 <- function(row_params){
+    params <- newSplatParams()
+    params <- setParams(params, update = row_params %>% aslist2())
+    sim1 <- splatSimulateGroups(params)
+
+    # Number of cells in each batch in the final simulation
+    batch_ncells <- c(300, 250, 220, 200, 180, 100) * 10
+    # Proportions in each group in each batch that we want. Should sum to 1.
+    batch_props <- list(
+        c(0.35, 0.22, 0.15, 0.13, 0.10, 0.05, 0.00),
+        c(0.25, 0.33, 0.20, 0.10, 0.00, 0.08, 0.04),
+        c(0.30, 0.30, 0.00, 0.20, 0.10, 0.10, 0.00),
+        c(0.15, 0.20, 0.35, 0.15, 0.15, 0.00, 0.00),
+        c(0.40, 0.05, 0.10, 0.10, 0.17, 0.12, 0.06),
+        c(0.45, 0.35, 0.15, 0.05, 0.00, 0.00, 0.00)
+    )
+
+
+    # Downsample cells in our simulation
+    message("Downsampling cells...")
+    sim1 <- sample_group_props(sim1, batch_ncells, batch_props)
+    # Set proportion of counts for each batch (relative library size)
+    batch_count_props <- c(
+        Batch1 = 0.30,
+        Batch2 = 0.25,
+        Batch3 = 0.32,
+        Batch4 = 0.45,
+        Batch5 = 0.28,
+        Batch6 = 1.00
+    )
+    cell_count_props <- batch_count_props[colData(sim1)$Batch]
+    # Downsample counts
+    message("Downsampling counts...")
+    counts(sim1) <- DropletUtils::downsampleMatrix(counts(sim1), cell_count_props,
+        bycol = TRUE
+    )
+
+    return(sim1)
+}
+
+write_h5ad_from_sce <- function(sim, outfile) {
+    if (!file.exists(outfile)) {
+        message("Extracting counts and metadata...")
+        counts <- t(counts(sim)) %>% as.matrix() # for AnnData the matrix is transposed: Gene in columns Cells in rows
+        metadata <- colData(sim) %>% as.data.frame()
+        var <- rowData(sim) %>% as.data.frame()
+
+        message("Creating AnnData object")
+        adata <- anndataR::AnnData(
+            X = counts,
+            obs = metadata,
+            var = var
+        )
+        message(paste0("Saving ", outfile))
+        anndataR::write_h5ad(adata, path = outfile, mode = "w", compression = "none")
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+}
+
+```
+
+## run and save sim 1
+```{r}
+
+pblapply(seq_len(nrow(samplesheet_sim1)), function(i) {
+    set.seed(42)
+    dparam <- samplesheet_sim1[i, ] %>% select(
+        seed,
+        lib.loc,
+        dropout.type,
+        dropout.shape,
+        dropout.mid,
+        batchCells,
+        batch.facLoc,
+        batch.facScale,
+        group.prob,
+        de.prob,
+        de.facLoc,
+        de.facScale
+    )
+    outfile <- samplesheet_sim1[i, ]$file_path
+    if (!file.exists(outfile)) {
+        message("beep...")
+        sim <- simulate_row_params_sim1(dparam)
+        sim <- perform_qc(sim)
+        write_h5ad_from_sce(sim, outfile = outfile)
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+}, cl = 10)
+```
+
+
+# Sim 2
+## Sim 2 parameters and samplesheet
+```{r}
+outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout"
+
+fixed_params_sim2 <- list(
+    # Six batches with 10000 cells each. Needs to be more than we want in the
+    # final simulation.    
+    batchCells     = c(1000, 1000, 1000, 1000) * 10,
+    batch.facLoc   = c(0.20, 0.25, 0.22, 0.28),
+    batch.facScale = c(0.10, 0.08, 0.12, 0.10),
+    # Groups with equal probabilities
+    group.prob     = rep(1, 4) / 4,
+    # Differential expression by group
+    de.prob        = c(0.10, 0.12, 0.08, 0.20),
+    de.facLoc      = c(0.10, 0.08, 0.12, 0.18),
+    de.facScale    = c(0.40, 0.30, 0.45, 0.48)
+    # Seed
+)
+
+samplesheet_sim2 <- tibble(
+    seed = 1,
+    lib.loc = 12,
+    dropout.type = "experiment",
+    dropout.shape = -5,
+    dropout.mid = seq(0.5, 3.5, length.out = 10)
+) 
+    
+samplesheet_sim2 <- add_col_from_list(samplesheet_sim2, fixed_params_sim2)
+samplesheet_sim2$sim <- "sim2"
+samplesheet_sim2$sample_name <- paste0(samplesheet_sim2$sim, "_DropoutSimulation_dropout.type", samplesheet_sim2$dropout.type, "_dropout.shape", abs(samplesheet_sim2$dropout.shape), "_dropout.mid", samplesheet_sim2$dropout.mid)
+samplesheet_sim2$file_path <- file.path(outdir, paste0(samplesheet_sim2$sample_name, ".h5ad"))
+
+# if dropout.type is "cells", dropout.mid and dropout.shape have 
+
+```
+
+## Functions Sim 2
+```{r}
+# CHUNK FUNCTION FROM BBMISC. COMMENT: check license
+#' Chunk elements of vectors into blocks of nearly equal size.
+#'
+#' In case of shuffling and vectors that cannot be chunked evenly,
+#' it is chosen randomly which levels / chunks will receive 1 element less.
+#' If you do not shuffle, always the last chunks will receive 1 element less.
+#'
+#' @param x [ANY]\cr
+#'   Vector, list or other type supported by \code{\link[base]{split}}.
+#' @param chunk.size [\code{integer(1)}]\cr
+#'   Requested number of elements in each chunk.
+#'   Cannot be used in combination with \code{n.chunks} or \code{props}.
+#'   If \code{x} cannot be evenly chunked, some chunks will have less elements.
+#' @param n.chunks [\code{integer(1)}]\cr
+#'   Requested number of chunks.
+#'   If more chunks than elements in \code{x} are requested, empty chunks are
+#'   dropped.
+#'   Can not be used in combination with \code{chunks.size} or \code{props}.
+#' @param props [\code{numeric}]\cr
+#'   Vector of proportions for chunk sizes.
+#'   Empty chunks may occur, depending on the length of \code{x} and the given
+#'   proportions.
+#'   Cannot be used in combination with \code{chunks.size} or \code{n.chunks}.
+#' @param shuffle [\code{logical(1)}]\cr
+#'   Shuffle \code{x}?
+#'   Default is \code{FALSE}.
+#' @return [unnamed \code{list}] of chunks.
+#' @export
+#' @examples
+#' xs <- 1:10
+#' chunk(xs, chunk.size = 3)
+#' chunk(xs, n.chunks = 2)
+#' chunk(xs, n.chunks = 2, shuffle = TRUE)
+#' chunk(xs, props = c(7, 3))
+chunk <- function(x, props, shuffle = FALSE) {
+    library(checkmate)
+    assertFlag(shuffle)
+    nx <- length(x)
+
+    ch <-  {
+            assertNumeric(props, min.len = 1L, any.missing = FALSE, lower = 0)
+            props <- props / sum(props)
+            ch <- factor(rep.int(seq_along(props), round(props * nx, digits = 0L)),
+                levels = seq_along(props)
+            )
+            if (shuffle) sample(ch) else ch
+        }
+
+    unname(split(x, ch))
+}
+
+
+
+add_subbatches <- function(sim, subbatch_props) {
+    message("Adding subbatches...")
+
+    params <- metadata(sim)$Params
+    n_batches <- getParam(params, "nBatches")
+
+    if (!all(sapply(subbatch_props, sum) == 1)) {
+        stop("Not all subbatch props sum to 1")
+    }
+
+    colData(sim)$SubBatch <- NA
+    # subbatch_list <- list()
+    for (batch_idx in seq_len(n_batches)){
+        message("Processing Batch ", batch_idx, "...")
+
+        batch <- paste0("Batch", batch_idx)
+        is_batch <- colData(sim)$Batch == batch
+        batch_size <- sum(is_batch)
+
+        subbatches <- chunk(colnames(sim)[is_batch],
+            props = subbatch_props[[batch_idx]],
+            shuffle = FALSE
+        )
+
+        for (subbatch_idx in seq_along(subbatches)) {
+            message("Adding SubBatch ", subbatch_idx, "...")
+
+            subbatch_cells <- subbatches[[subbatch_idx]]
+
+            noise_sim <- splatSimulate(
+                batchCells = length(subbatch_cells),
+                lib.loc = 8.00,
+                lib.scale = 0.50,
+                verbose = FALSE,
+                seed = batch_idx * subbatch_idx,
+                dropout.mid = getParam(params, "dropout.mid"),
+                dropout.shape = getParam(params, "dropout.shape")
+            )
+
+            message("Adding SubBatch ", subbatch_idx, " counts to simulation...")
+            tmp_counts <- counts(sim)[, subbatch_cells, drop = FALSE] + counts(noise_sim)
+            tmp_counts <- tmp_counts %>% as.matrix()
+            full_counts <- counts(sim) %>% as.matrix()
+            full_counts[, subbatch_cells] <- full_counts[, subbatch_cells] + tmp_counts
+            full_counts <- as(full_counts, "dgCMatrix")
+            counts(sim) <- full_counts
+            message("Done adding counts")
+            colData(sim)[subbatch_cells, "Sub"] <- paste0("Sub", subbatch_idx)
+            colData(sim)[subbatch_cells, "SubBatch"] <- paste0(
+                batch,
+                "Sub", subbatch_idx
+            )
+
+            # subbatch_list[[paste0(batch, "Sub", subbatch_idx)]]$sim <- noise_sim
+            # subbatch_list[[paste0(batch, "Sub", subbatch_idx)]]$cells <- subbatch_cells
+        }
+    }
+
+    return(sim)
+}
+
+simulate_row_params_sim2 <- function(row_params) {
+    params <- newSplatParams()
+    params <- setParams(params, update = row_params %>% aslist2())
+    sim2 <- splatSimulateGroups(params)
+
+    # Number of cells in each batch in the final simulation
+    batch_ncells <- c(500, 500, 500, 500) * 10
+
+    # Proportions in each group in each batch that we want. Should sum to 1.
+    batch_props <- list(
+        c(0.35, 0.22, 0.25, 0.18),
+        c(0.25, 0.40, 0.27, 0.10),
+        c(0.30, 0.15, 0.35, 0.20),
+        c(0.10, 0.30, 0.20, 0.40)
+    )
+
+    # Downsample cells in our simulation
+    message("Downsampling cells...")
+    sim2 <- sample_group_props(sim2, batch_ncells, batch_props)
+
+    # Set proportion of counts for each batch (relative library size)
+    batch_count_props <- c(
+        Batch1 = 1.00,
+        Batch2 = 0.70,
+        Batch3 = 0.60,
+        Batch4 = 0.30
+    )
+
+    cell_count_props <- batch_count_props[colData(sim2)$Batch]
+
+    # Add subbatches
+    subbatch_props <- list(
+        c(0.25, 0.25, 0.25, 0.25),
+        c(0.30, 0.30, 0.20, 0.20),
+        c(0.40, 0.25, 0.25, 0.10),
+        c(0.35, 0.35, 0.15, 0.15)
+    )
+
+    sim2 <- add_subbatches(sim2, subbatch_props)
+    colData(sim2)["OldBatch"] <- colData(sim2)["Batch"]
+    colData(sim2)["Batch"] <- colData(sim2)["SubBatch"]
+    # Downsample counts
+    message("Downsampling counts...")
+    counts(sim2) <- DropletUtils::downsampleMatrix(counts(sim2), cell_count_props,
+        bycol = TRUE
+    )
+
+
+    return(sim2)
+}
+
+
+
+```
+
+## Run and save all sim 2
+```{r}
+
+pblapply(seq_len(nrow(samplesheet_sim2)), function(i) {
+    # set.seed(42) # seed is already set in splatter simulation parmam
+    dparam <- samplesheet_sim2[i, ] %>% select(
+        seed,
+        lib.loc,
+        dropout.type,
+        dropout.shape,
+        dropout.mid,
+        batchCells,
+        batch.facLoc,
+        batch.facScale,
+        group.prob,
+        de.prob,
+        de.facLoc,
+        de.facScale
+    )
+    outfile <- samplesheet_sim2[i, ]$file_path
+    print(paste0("Processing ", outfile))
+    if (!file.exists(outfile)) {
+        message("beep...")
+        sim <- simulate_row_params_sim2(dparam)
+        sim <- perform_qc(sim, batch_col = "Batch")
+        write_h5ad_from_sce(sim, outfile = outfile)
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+    return(NULL)
+}, cl = 10)
+
+
+```
+
+# add measure of sparsitiy to the samplesheet metadata too
+* reload the h5ad files and calculate sparsity of each dataset
+```{r}
+load_and_calc_sparsity <- function(file_path) {
+    adata <- read_h5ad(file_path)
+    counts <- adata$X
+    total_elements <- nrow(counts) * ncol(counts)
+    sparsity <- sum(counts == 0) / total_elements
+    return(sparsity)
+}
+```
+
+
+
+# Write samplesheet
+```{r}
+samplesheet_sim1$sparsity <- pblapply(samplesheet_sim1$file_path, load_and_calc_sparsity, cl = 10)
+samplesheet_sim2$sparsity <- pblapply(samplesheet_sim2$file_path, load_and_calc_sparsity, cl = 10)
+
+samplesheet <- rbind(samplesheet_sim1, samplesheet_sim2)
+
+View(head(samplesheet))
+samplesheet <- samplesheet %>% mutate(sparsity = round(as.numeric(sparsity), 4) * 100)
+write_json(samplesheet, path = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/samplesheet.json", pretty = TRUE, auto_unbox = TRUE)
+```
+
+## write samplesheet for SEACells pipeline
+```{r}
+colnames(samplesheet)
+samplesheet %>%
+    select(sample_name, file_path, dropout.mid, sparsity, sim) %>%
+    mutate_if(is.list, as.numeric) %>%
+    write.table(., file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/samplesheet.tsv", sep = "\t")
+samplesheet_sim1 %>%
+    select(sample_name, file_path, dropout.mid, sparsity, sim) %>%
+    mutate_if(is.list, as.numeric) %>%
+    write.table(., file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/samplesheet_sim1.tsv", sep = "\t")
+samplesheet_sim2 %>%
+    select(sample_name, file_path, dropout.mid, sparsity, sim) %>%
+    mutate_if(is.list, as.numeric) %>%
+    write.table(., file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/samplesheet_sim2.tsv", sep = "\t")
+```
+
+```{r}
+View(head(samplesheet_sim2))
+dparam <- samplesheet_sim2 %>%
+    select(
+        seed,
+        lib.loc,
+        dropout.type,
+        dropout.shape,
+        dropout.mid,
+        batchCells,
+        batch.facLoc,
+        batch.facScale,
+        group.prob,
+        de.prob,
+        de.facLoc,
+        de.facScale
+    ) %>%
+    slice(1)
+```
+
+
+

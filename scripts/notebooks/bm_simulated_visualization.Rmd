@@ -23,10 +23,6 @@ knitr::opts_chunk$set(fig.width = 14)
 ```{r}
 .libPaths(.Library)
 library(tidyverse)
-
-```
-
-```{r}
 library(Seurat)
 library(anndataR)
 library(bigstatsr)
@@ -37,132 +33,262 @@ library(matrixStats)
 
 # Load metrics
 ```{r}
-metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/metrics/combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/metrics/lower_batch_biovar_combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
 head(metrics)
 colnames(metrics)
-samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet.tsv", sep = "\t", stringsAsFactors = FALSE)
-samplesheet <- samplesheet %>%
-  filter(ngroup <= 4, nbatch <= 5)
-colnames(samplesheet)
+samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_low_facLoc.tsv", sep = "\t", stringsAsFactors = FALSE)
+
 
 metrics <- metrics %>%
-  left_join(samplesheet %>% select(-original_h5ad), by = join_by(sample == sample_name))
-
-# metrics["Batch"] = metrics[["ASW_label/batch", "PCR_batch", "graph_conn"]].mean(axis=1)
-# metrics["Bio"] = metrics[["ASW_label", "isolated_label_silhouette"]].mean(axis=1)
-bio_metrics <- c("cLISI", "ARI_cluster.label", "NMI_cluster.label", "ASW_label", "isolated_label_F1", "isolated_label_silhouette")
-batch_metrics <- c("kBET", "ASW_label.batch", "iLISI")
-
-# calculate weighted mean with 0.6 for bio and 0.4 for batch
-# first min max scale every metrics
-#metrics_scaled = (metrics - metrics.min()) / (metrics.max() - metrics.min())
-min_max_norm <- function(x) {
-    (x - min(x)) / (max(x) - min(x))
-  }
-
-metrics_scaled <- metrics %>%
-  # scale data
-  mutate(across(all_of(bio_metrics), ~ min_max_norm(.) %>% as.vector), .by = integration_method) %>%
-  mutate(across(all_of(batch_metrics), ~ min_max_norm(.) %>% as.vector), .by = integration_method) %>%
-  rowwise() %>%
+  left_join(samplesheet %>% select(-original_h5ad), by = join_by(sample == sample_name)) %>%
   mutate(
-    bio_score = mean(c_across(all_of(bio_metrics))),
-    batch_score = mean(c_across(all_of(batch_metrics))),
-    overall_score = 0.6 * bio_score + 0.4 * batch_score
-  ) %>%
-  ungroup()
+    de.facLoc = factor(de.facLoc),
+    batch.facLoc = factor(batch.facLoc),
+    gene_selection = factor(gene_selection),
+    integration_method = factor(integration_method)
+  )
 
-View(metrics_scaled)
-colnames(metrics_scaled)
+View(metrics)
 ```
 
+```{r}
+outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_simulated_visualization/"
+```
+
+# Plot
+## Heatmap integration score as a function of biol. variab. and batch effects
+```{r}
+for (m in unique(metrics$integration_method)) {
+  for (i in unique(metrics$ngroup)) {
+    for (j in unique(metrics$nbatch)) {
+      p <- metrics %>%
+        filter(ngroup == i, nbatch == j, integration_method == m) %>%
+        ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
+        geom_tile(aes(fill = Total, color = Total)) +
+        coord_equal() +
+        labs(x = "Batch Effects", y = "Biological Variability", title = paste0(m, "-ngroup", i, "-nbatch", j, "-TotalScore"))
+      print(p)
+    }
+  }
+}
+p <- metrics %>%
+  ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
+  geom_tile(aes(fill = Total, color = Total)) +
+  coord_equal()+
+  facet_wrap(~gene_selection+integration_method)
+p
+
+# p <- metrics %>% 
+#   ggplot(aes(x = de.facLoc, y = Total))+
+#   geom_point(aes(color = batch.facLoc, shape = gene_selection))+
+#   facet_wrap(~gene_selection+integration_method)
+# p
+
+```
 
 ```{r}
+for (m in unique(metrics$integration_method)) {
+  for (g in unique(metrics$gene_selection)) {
+    p <- metrics %>%
+      filter(integration_method == m, gene_selection == g) %>%
+      summarise(
+        mean_score = mean(Total),
+        median_score = median(Total),
+        integration_method = m,
+        de.facLoc = de.facLoc,
+        batch.facLoc = batch.facLoc,
+        .by = c(de.facLoc, batch.facLoc)
+      ) %>%
+      distinct() %>% 
+      ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
+        geom_tile(aes(fill = mean_score)) +
+        geom_text(aes(label = round(mean_score, 2)), color = "black", size = 4) +  # Add text to tiles
+        scale_fill_gradient(low ="grey", high = "#64487A", limits=c(0,1))+
+        coord_equal() +
+        labs(x = "Batch Effects", y = "Biological Variability", title = paste0(m, " - ", g, " - mean Total Score"))
+    print(p)
+  }
+}
+```
 
-p <- metrics_scaled %>% 
-  ggplot(aes(x = batch.facLoc, y = de.facLoc))+
-  geom_tile(aes(fill = overall_score))+
-  facet_wrap(~gene_selection+integration_method)
-p
+```{r}
+for (m in unique(metrics$integration_method)) {
+  for (g in unique(metrics$gene_selection)) {
+    p <- metrics %>%
+      filter(integration_method == m, gene_selection == g) %>%
+      summarise(
+        mean_score = mean(Total),
+        median_score = median(Total),
+        integration_method = m,
+        de.facLoc = de.facLoc,
+        batch.facLoc = batch.facLoc,
+        .by = c(de.facLoc, batch.facLoc)
+      ) %>%
+      distinct() %>% 
+      ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
+        geom_tile(aes(fill = median_score)) +
+        geom_text(aes(label = round(median_score, 2)), color = "black", size = 4) +  # Add text to tiles
+        scale_fill_gradient(low ="grey", high = "#64487A", limits=c(0,1))+
+        coord_equal() +
+        labs(x = "Batch Effects", y = "Biological Variability", title = paste0(m, " - ", g, " - median Total Score"))
+    print(p)
+  }
+}
+```
 
-p <- metrics_scaled %>% 
-  ggplot(aes(x = de.facLoc, y = overall_score))+
-  geom_point(aes(color = batch.facLoc, shape = gene_selection))+
-  facet_wrap(~gene_selection+integration_method)
-p
+## violin plots
+### Total Score
+```{r}
+dodge <- position_dodge(width = 0.7)
+for (m in unique(metrics$integration_method)) {
+  for (i in unique(metrics$ngroup)) {
+    for (j in unique(metrics$nbatch)) {
+      p <- metrics %>%
+        filter(ngroup == i, nbatch == j, integration_method == m) %>%
+        ggplot(aes(x = as.factor(de.facLoc), y = Total)) +
+        # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
+        geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
+        geom_jitter(aes(fill = gene_selection), alpha = 0.7, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
+        # make manual color
+        scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey"))+
+        theme_bw() +
+        labs(x = "Biological Variability", y = "Integration Score", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
+        ylim(0, 1) +
+        # increase font size of all text
+        theme(
+          text = element_text(size = 30, face = "bold"),
+          aspect.ratio = 1,
+          legend.position = c(0.8, 0.1)
+        )
 
-dodge <- position_dodge(width = 0.8)
-
-for (i in unique(metrics_scaled$ngroup)) {
-  for (j in unique(metrics_scaled$nbatch)) {
-    print(metrics_scaled %>% 
-      filter(ngroup == i, nbatch == j) %>%
-      ggplot(aes(x = as.factor(de.facLoc), y = overall_score))+
-      # geom_point(aes(color = batch.facLoc, shape = gene_selection))+
-        geom_violin(aes(fill = as.factor(gene_selection)), position = dodge)+
-        geom_boxplot(width = 0.2, position = dodge,  aes(fill = as.factor(gene_selection))) +
-        facet_wrap(~integration_method, ncol = 1)+
-        ggtitle(paste0("ngroup: ", i, ", nbatch: ", j)))
-
+        print(p)
+        # ggsave(
+        #     file.path(outplot, paste0(m, "_ngroup", i, "_nbatch", j, "_TotalScore_violin.pdf")),
+        #     width = 10, 
+        #     height = 10,
+        #     plot = p
+        # )
+    
+      
+    }
   }
 }
 
-p <- metrics_scaled %>% 
-  ggplot(aes(x = as.factor(de.facLoc), y = overall_score))+
-  geom_violin(aes(fill = gene_selection), position = dodge)+
-  geom_boxplot(width = 0.1, aes(fill = gene_selection), position = dodge) +
-  facet_wrap(~integration_method, ncol = 1)+
-  theme(legend.position = "none")
-p
 ```
 
 ```{r}
+metrics %>%
+  distinct(ngroup, nbatch)
 dodge <- position_dodge(width = 0.7)
-p <- metrics_scaled %>% 
-  filter(integration_method == "scvi",
-         ngroup ==2,
-         nbatch == 5)%>%
-  ggplot(aes(x = as.factor(de.facLoc), y = overall_score))+
+
+p <- metrics %>%
+  filter(integration_method == "scvi") %>%
+  ggplot(aes(x = as.factor(de.facLoc), y = Total)) +
   # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
   geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
   geom_jitter(aes(fill = gene_selection), position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
   # make manual color
   # scale_color_brewer(palette = "Paired") +  # "Paired" is a good palette for qualitative factors
-  theme_bw()+
+  theme_bw() +
   labs(x = "Biological Variability", y = "Integration Score") +
-  #increase font size of all text
-  theme(text = element_text(size = 30, face = "bold"),
-  aspect.ratio = 1,
-  legend.position = c(0.7,0.2))
+  # increase font size of all text
+  theme(
+    text = element_text(size = 30, face = "bold"),
+    aspect.ratio = 1,
+    legend.position = c(0.9, 0.1)
+  ) +
+  facet_wrap(~ ngroup + nbatch, ncol = 5, labeller = "label_both")
 p
 
-```
-
-```{r}
-unique(metrics_scaled$integration_method)
-# plot batch.facLoc against the overall_score
-p <- metrics_scaled %>% 
-  filter(integration_method == "scvi",
-         ngroup ==2,
-         nbatch == 5)%>%
-  ggplot(aes(x = as.factor(batch.facLoc), y = overall_score))+
-    geom_point()+
-    facet_wrap(~gene_selection+de.facLoc)
-
+metrics %>%
+  distinct(ngroup, nbatch)
+dodge <- position_dodge(width = 0.7)
+p <- metrics %>%
+  filter(integration_method == "scanorama") %>%
+  ggplot(aes(x = as.factor(de.facLoc), y = Total)) +
+  # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
+  geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
+  geom_jitter(aes(fill = gene_selection), position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
+  # make manual color
+  # scale_color_brewer(palette = "Paired") +  # "Paired" is a good palette for qualitative factors
+  theme_bw() +
+  labs(x = "Biological Variability", y = "Integration Score") +
+  # increase font size of all text
+  theme(
+    text = element_text(size = 30, face = "bold"),
+    aspect.ratio = 1,
+    legend.position = c(0.9, 0.1)
+  ) +
+  facet_wrap(~ ngroup + nbatch, ncol = 5, labeller = "label_both")
 p
 ```
 
+### Bio.conservation
 ```{r}
-metrics_scaled %>%
-  ggplot(aes(x = facloc_batch, y = bio_score))+
-  geom_line(aes(color = gene_selection))+
-  facet_wrap(~facloc_bio) +
-  ggtitle(paste0("Overall integration score split by biological variability. Integration method: ", unique(metrics_scaled$integration_method)))
-
-metrics_scaled %>%
-  ggplot(aes(x = facloc_batch, y = batch_score))+
-  geom_line(aes(color = gene_selection))+
-  facet_wrap(~facloc_bio) +
-  ggtitle(paste0("Overall integration score split by biological variability. Integration method: ", unique(metrics_scaled$integration_method)))
+dodge <- position_dodge(width = 0.7)
+for (m in unique(metrics$integration_method)) {
+  for (i in unique(metrics$ngroup)) {
+    for (j in unique(metrics$nbatch)) {
+      p <- metrics %>%
+        filter(ngroup == i, nbatch == j, integration_method == m) %>%
+        ggplot(aes(x = as.factor(de.facLoc), y = Bio.conservation)) +
+        # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
+        geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
+        geom_jitter(aes(fill = gene_selection), alpha = 0.7, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
+        # make manual color
+        scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey"))+
+        theme_bw() +
+        labs(x = "Biological Variability", y = "Bio.conservation", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
+        ylim(0, 1) +
+        # increase font size of all text
+        theme(
+          text = element_text(size = 30, face = "bold"),
+          aspect.ratio = 1,
+          legend.position = c(0.8, 0.1)
+        )
+        print(p)
+        # ggsave(
+        #   file.path(outplot, paste0(m, "_ngroup", i, "_nbatch", j, "_BioConservation_violin.pdf")),
+        #   width = 10,
+        #   height = 10,
+        #   plot = p
+        # )
+    }
+  }
+}
 ```
 
+### Batch.correction
+```{r}
+dodge <- position_dodge(width = 0.7)
+for (m in unique(metrics$integration_method)) {
+  for (i in unique(metrics$ngroup)) {
+    for (j in unique(metrics$nbatch)) {
+      p <- metrics %>%
+        filter(ngroup == i, nbatch == j, integration_method == m) %>%
+        ggplot(aes(x = as.factor(de.facLoc), y = Batch.correction)) +
+        # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
+        geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
+        geom_jitter(aes(fill = gene_selection), alpha = 0.7, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
+        # make manual color
+        scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey"))+
+        theme_bw() +
+        labs(x = "Biological Variability", y = "Batch.correction", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
+        ylim(0, 1) +
+        # increase font size of all text
+        theme(
+          text = element_text(size = 30, face = "bold"),
+          aspect.ratio = 1,
+          legend.position = c(0.8, 0.1)
+        )
+      print(p)
+      # ggsave(
+      #   file.path(outplot, paste0(m, "_ngroup", i, "_nbatch", j, "_BatchCorrection_violin.pdf")),
+      #   width = 10,
+      #   height = 10,
+      #   plot = p
+      # )
+    }
+  }
+}
+```

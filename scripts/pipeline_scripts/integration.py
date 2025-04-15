@@ -5,7 +5,7 @@ import scanpy.external as sce
 import anndata as ad
 import numpy as np
 import pandas as pd
-import harmony
+# import harmony
 import scvi
 import os
 from os.path import join
@@ -38,7 +38,7 @@ from os.path import join
 # MAIN FUNCTION
 #------------------------------------------------------------------------------#
 
-def integrate(infile, feature_subset, outfile, integration_method, batch_key, label_key):
+def integrate(infile, feature_subset, outfile, integration_method, batch_key, label_key=None):
     click.secho(f"Input file is: {infile}", fg="bright_yellow", err=True)
     click.secho("Reading input file...", fg="bright_yellow", err=True)
 
@@ -73,7 +73,8 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
         scvi.model.SCVI.setup_anndata(adata, layer="counts", batch_key=batch_key)
         # "models raw counts directly, so it is important that we provide it with a count matrix rather than a normalized expression matrix"
         # https://www.sc-best-practices.org/cellular_structure/integration.html#variational-autoencoder-vae-based-integration
-        max_epochs_scvi = np.min([round((20000 / adata.n_obs) * 400), 400])
+        # max_epochs_scvi = np.min([round((20000 / adata.n_obs) * 400), 1000])
+        max_epochs_scvi = 1000
         
         click.secho("Training SCVI model...", fg="bright_yellow", err=True)
         model = scvi.model.SCVI(adata)

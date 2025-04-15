@@ -4,7 +4,8 @@ import scanpy as sc
 import anndata as ad
 import numpy as np
 import pandas as pd
-import scib
+# import scib
+from scib_metrics.benchmark import Benchmarker, BioConservation, BatchCorrection
 import os
 from os.path import join
 
@@ -27,7 +28,7 @@ from os.path import join
 @click.option("--integration_method",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
-              type=click.Choice(['harmony','scvi','scanvi', 'seurat', 'scanorama']))
+              type=click.Choice(['harmony', 'scvi', 'scanvi', 'seurat', 'scanorama']))
 @click.option("--gene_selection",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
@@ -137,25 +138,43 @@ def calc_metrics(original_h5ad,
         
         adata_integrated.obsm["X_emb"] = adata_integrated.obsm['X_pca']
     
-    selected_metrics = {
-        'ari_' : True,
-        'nmi_' : True,
-        'silhouette_' : True,
-        'pcr_' : True,
-        # 'hvg_score_' : False,
-        'isolated_labels_' : True,
-        'isolated_labels_f1_' : True,
-        'isolated_labels_asw_' : True,
-        'graph_conn_' : True,
-        'kBET_' : True,
-        'lisi_graph_' : True,
-        'ilisi_' : True,
-        'clisi_' : True,
-        'n_cores' : 20
-    }
-    click.secho(f"Calculating metrics: {selected_metrics}", fg='bright_yellow', err=True)
+    bm = Benchmarker(
+        adata_integrated,
+        batch_key = batch_key,
+        label_key = label_key,
+        bio_conservation_metrics = BioConservation(),
+        batch_correction_metrics = BatchCorrection(),
+        embedding_obsm_keys=['X_emb'],
+        n_jobs = 10
+    )
+    bm.benchmark()
+    metrics = bm.get_results(min_max_scale=False).reset_index(drop=True)
+    metrics = metrics.iloc[0:1,:]
 
-    metrics = scib.metrics.metrics(adata, adata_integrated, batch_key = batch_key, label_key = label_key, embed = 'X_emb', **selected_metrics)
+    # selected_metrics = {
+    #     'ari_' : True,
+    #     'nmi_' : True,
+    #     'silhouette_' : True,
+    #     'pcr_' : True,
+    #     # 'hvg_score_' : False,
+    #     'isolated_labels_' : True,
+    #     'isolated_labels_f1_' : True,
+    #     'isolated_labels_asw_' : True,
+    #     'graph_conn_' : True,
+    #     'kBET_' : True,
+    #     'lisi_graph_' : True,
+    #     'ilisi_' : True,
+    #     'clisi_' : True,
+    #     'n_cores' : 20
+    # }
+    # click.secho(f"Calculating metrics: {selected_metrics}", fg='bright_yellow', err=True)
+
+    # metrics = scib.metrics.metrics(adata, 
+    #                                adata_integrated, 
+    #                                batch_key = batch_key, 
+    #                                label_key = label_key, 
+    #                                embed = 'X_emb', 
+    #                                **selected_metrics)
 
     click.secho(f"Saving metrics to {outfile}", fg='bright_yellow', err=True)
     
@@ -164,7 +183,7 @@ def calc_metrics(original_h5ad,
         hvg_angl = "anglemania"
     elif "hvg" in hvg_angl:
         hvg_angl = "hvg"
-    metrics = metrics.T
+    # metrics = metrics.T
     # IF SNAKEMAKE IS BEING USED:
     metrics["sample"] = sample
     metrics["integration_method"] = integration_method

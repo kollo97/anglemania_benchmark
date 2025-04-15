@@ -1,60 +1,100 @@
+
+# load packages
+
 ```{r}
 .libPaths(.Library)
 suppressPackageStartupMessages({
     library(splatter)
     library(stringr)
     library(dplyr)
-    library(SPARSim)
+    options(Seurat.object.assay.version = "v3")
+    library(SingleCellExperiment)
 })
 ```
 
-
-
+# first setup
+## make samplesheet
 ```{r}
-dparams = expand.grid(
-    batch.facLoc = c(seq(0.1, 1, 0.1)), # Strength of batch effect
-    de.facLoc    = c(seq(0.1, 1, 0.1)), # Biological variability
-    nbatch       = c(2,3,4,5,10), # Number of batches
-    ngroup       = c(2,4,6,8), # Number of cell types
-    groupCells   = 1000, # Number of cells per cell type (adjust as needed)
-    stringsAsFactors = FALSE
-)
-names(dparams)
+# dparams = expand.grid(
+#     batch.facLoc = c(seq(0.1, 1, 0.1)), # Strength of batch effect
+#     de.facLoc    = c(seq(0.1, 1, 0.1)), # Biological variability
+#     nbatch       = c(2,3,4,5), # Number of batches
+#     ngroup       = c(2,4), # Number of cell types
+#     groupCells   = 1000, # Number of cells per cell type (adjust as needed)
+#     stringsAsFactors = FALSE
+# )
+# names(dparams)
 
-outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad"
-samplesheet <- dparams %>%
-    mutate(sample_name = across(everything(), ~paste0(cur_column(), .x))) %>%
-    rowwise() %>%
-    mutate(sample_name = paste(sample_name, collapse = "_")) %>%
-    ungroup() %>%
-    mutate(original_h5ad = file.path(outdir, paste0(sample_name, ".h5ad"))) %>%
-    select(sample_name, original_h5ad, everything())
-colnames(samplesheet)
+# outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad"
+# samplesheet <- dparams %>%
+#     mutate(sample_name = across(everything(), ~ paste0(cur_column(), .x))) %>%
+#     rowwise() %>%
+#     mutate(sample_name = paste(sample_name, collapse = "_")) %>%
+#     ungroup() %>%
+#     mutate(original_h5ad = file.path(outdir, paste0(sample_name, ".h5ad"))) %>%
+#     select(sample_name, original_h5ad, everything()) %>%
+#     distinct() %>%
+#     mutate(
+#         de.facScale = de.facLoc,
+#         batch.facScale = batch.facLoc
+#     )
+# colnames(samplesheet)
 
 
 ```
 
-```{r}
-create_and_save_sim <- function(sample_name, ngroup, nbatch, groupCells, batch.facLoc, de.facLoc, outfile){
 
+# simulation function
+```{r}
+#' @description Create a scRNA-seq simulation using splatter
+#' and save it to h5ad using anndataR
+#' @param sample_name Name of the sample
+#' @param ngroup Number of cell types
+#' @param nbatch Number of batches
+#' @param groupCells Number of cells per cell type
+#' @param batch.facLoc Location of batch effect
+#' @param batch.facScale Scale of batch effect
+#' @param de.facLoc Location of biological variability
+#' @param de.facScale Scale of biological variability
+#' @param outfile Output file
+#' @param ... Additional arguments passed to splatSimulate
+#' @return NULL
+# #' @export
+create_and_save_sim <- function(
+    sample_name,
+    ngroup,
+    nbatch,
+    groupCells,
+    batch.facLoc,
+    batch.facScale = 0.1,
+    de.facLoc,
+    de.facScale = 0.1,
+    outfile,
+    ...){
+    library(splatter)
+    library(dplyr)
+    library(anndataR)
+    library(SingleCellExperiment)
+    
     if (!file.exists(outfile)) {
         print(paste0("Processing ", sample_name, " with params:"))
-        print(knitr::kable(cbind(ngroup, batch.facLoc, de.facLoc)))
+        print(knitr::kable(cbind(ngroup, nbatch, batch.facLoc, de.facLoc)))
         set.seed(42)
         message("Simulating data")
 
         sim = splatSimulate(
             batchCells = rep(groupCells * ngroup, nbatch),
-            group.prob = rep(1/ngroup, ngroup),
+            group.prob = rep(1 / ngroup, ngroup),
             batch.facLoc = batch.facLoc,
-            batch.facScale = 0.1,
+            batch.facScale = batch.facScale,
             method = "groups",
             verbose = FALSE,
-            out.prob    = 0.001,
-            de.prob     = 0.1,
-            de.facLoc   = de.facLoc,
-            de.facScale = 0.1,
-            bcv.common  = 0.1
+            out.prob = 0.001,
+            de.prob = 0.1,
+            de.facLoc = de.facLoc,
+            de.facScale = de.facScale,
+            bcv.common = 0.1,
+            ...
         )
 
         counts <- t(counts(sim)) %>% as.matrix() # for AnnData the matrix is transposed: Gene in columns Cells in rows
@@ -63,10 +103,11 @@ create_and_save_sim <- function(sample_name, ngroup, nbatch, groupCells, batch.f
 
         message("Creating AnnData object")
         adata <- anndataR::AnnData(
-                            X = counts,
-                            obs = metadata,
-                            var = var
-                        )
+            X = counts,
+            obs = metadata,
+            var = var
+        )
+        # file.remove(outfile)
         message(paste0("Saving ", outfile))
         anndataR::write_h5ad(adata, path = outfile, mode = "w", compression = "none")
     } else {
@@ -75,17 +116,102 @@ create_and_save_sim <- function(sample_name, ngroup, nbatch, groupCells, batch.f
 }
 ```
 
+# run and save simulations
+```{r}
+# library(doMC)
+# registerDoMC(25)
+# foreach(i = 1:nrow(samplesheet))%dopar%{
+#     set.seed(42)
+#     dparam = samplesheet[i,]
+#     create_and_save_sim(
+#         dparam$sample_name,
+#         dparam$ngroup,
+#         dparam$nbatch,
+#         dparam$groupCells,
+#         dparam$batch.facLoc,
+#         dparam$batch.facScale,
+#         dparam$de.facLoc,
+#         dparam$de.facScale,
+#         dparam$original_h5ad
+#     )
+# }
+```
+
+
+```{r}
+samplesheet$file_path <- samplesheet$original_h5ad
+write.table(samplesheet, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+
+# expand simulations to have more samples with lower biological variability
+* in the STACAS paper they showed "batchMild" and "batchStrong" simulations that had batch.facLoc of 0.06 and 0.1 respectively
+
+```{r}
+facLocs <- c(0, 0.01, 0.05, 0.1, 0.3, 0.6)
+dparams <- expand.grid(
+    batch.facLoc = facLocs, # Strength of batch effect
+    de.facLoc = facLocs, # Biological variability
+    nbatch = c(2, 4, 5), # Number of batches
+    ngroup = c(2, 4, 5), # Number of cell types
+    groupCells = 500, # Number of cells per cell type (adjust as needed)
+    stringsAsFactors = FALSE
+)
+names(dparams)
+
+outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad"
+samplesheet_low_facloc <- dparams %>%
+    mutate(sample_name = across(everything(), ~ paste0(cur_column(), .x))) %>%
+    rowwise() %>%
+    mutate(sample_name = paste(sample_name, collapse = "_")) %>%
+    ungroup() %>%
+    mutate(original_h5ad = file.path(outdir, paste0(sample_name, ".h5ad"))) %>%
+    select(sample_name, original_h5ad, everything()) %>%
+    distinct() %>%
+    mutate(
+        nGenes = 6000
+    )
+colnames(samplesheet_low_facloc)
+
+samplesheet_low_facloc$file_path <- samplesheet_low_facloc$original_h5ad
+write.table(samplesheet_low_facloc, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_low_facLoc.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+## run and save simulations
 ```{r}
 library(doMC)
-registerDoMC(25)
-foreach(i = 1:nrow(samplesheet))%dopar%{
+registerDoMC(50)
+foreach(i = seq_len(nrow(samplesheet_low_facloc))) %dopar% {
     set.seed(42)
-    dparam = samplesheet[i,]
-    create_and_save_sim(dparam$sample_name, dparam$ngroup, dparam$nbatch, dparam$groupCells, dparam$batch.facLoc, dparam$de.facLoc, dparam$original_h5ad)    
+    dparam <- samplesheet_low_facloc[i, ]
+    create_and_save_sim(
+        sample_name = dparam$sample_name,
+        ngroup = dparam$ngroup,
+        nbatch = dparam$nbatch,
+        groupCells = dparam$groupCells,
+        batch.facLoc = dparam$batch.facLoc,
+        batch.facScale = dparam$batch.facLoc, #make facScale same as facLoc
+        de.facLoc = dparam$de.facLoc,
+        de.facScale = dparam$de.facLoc, #make facScale same as facLoc
+        nGenes = dparam$nGenes,
+        outfile = dparam$original_h5ad
+    )
 }
 ```
 
+
+
+
 ```{r}
-# write.table(samplesheet, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+all_files <- list.files("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad", full.names = TRUE, pattern = "*h5ad")
+not_in_samplesheet <- setdiff(all_files, samplesheet_low_facloc$file_path)
+in_samplesheet <- intersect(all_files, samplesheet_low_facloc$file_path)
+for (file in all_files) {
+    if (!(file %in% samplesheet_low_facloc$file_path)) {
+        # file.remove(file)
+        print(file)
+    }
+}
 ```
+
 

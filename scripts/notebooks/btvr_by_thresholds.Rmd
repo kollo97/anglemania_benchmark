@@ -1,0 +1,310 @@
+# load libraries
+```{r}
+library(splatter)
+library(Seurat)
+library(anglemania)
+library(anndataR)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(tidyverse)
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
+today <- format(Sys.Date(), "%Y%m%d")
+library(glue)
+```
+
+# set up directories
+```{r}
+outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/btvr_by_thresholds/"
+if (!dir.exists(outplot)) {
+    dir.create(outplot, recursive = TRUE)
+}
+```
+
+```{r}
+# parameters
+ngroup <- 3
+nbatch <- 5
+groupCells <- 500
+batch.facLoc <- 0.3
+de.facLoc <- 0.1
+nGenes <- 5000
+
+sim <- splatSimulate(
+    batchCells = rep(groupCells * ngroup, nbatch),
+    group.prob = rep(1 / ngroup, ngroup),
+    batch.facLoc = batch.facLoc,
+    batch.facScale = 0.1,
+    method = "groups",
+    verbose = FALSE,
+    out.prob = 0.001,
+    de.prob = 0.1,
+    de.facLoc = de.facLoc,
+    de.facScale = 0.4,
+    bcv.common = 0.1,
+    nGenes = nGenes
+)
+
+```
+
+# calculate BTVR
+```{r}
+get_BTVR <- function(rowdata) {
+    # Calculate BioVar and TechVar using vectorized operations
+    bio_var_cols <- dplyr::select(rowdata, starts_with("DEFacGroup"))
+    tech_var_cols <- dplyr::select(rowdata, starts_with("BatchFacBatch"))
+
+    # Use apply function to compute variances row-wise
+    raw_BioVar <- apply(bio_var_cols, 1, var)
+    BioVar <- raw_BioVar
+    BioVar[BioVar > 0] <- raw_BioVar[raw_BioVar > 0] %>%
+        log() %>%
+        rescale()
+    raw_TechVar <- apply(tech_var_cols, 1, var)
+    TechVar <- raw_TechVar
+    TechVar[TechVar > 0] <- raw_TechVar[raw_TechVar > 0] %>%
+        log() %>%
+        rescale()
+
+    # TechVar <- raw_TechVar %>%
+    #   log() %>%
+    #   rescale()
+
+    # Compute BTVR directly
+    BTVR <- log(raw_BioVar + 1e-15 / raw_TechVar + 1e-15) %>% rescale()
+    GeneScore <- BTVR * BioVar # basically "scaled" by BioVar
+
+    # Create result tibble
+    summary_df <- tibble(
+        gene = rownames(rowdata),
+        BTVR = BTVR,
+        GeneScore = GeneScore,
+        raw_BioVar = raw_BioVar,
+        BioVar = BioVar,
+        raw_TechVar = raw_TechVar,
+        TechVar = TechVar,
+        GeneMean = rowdata$GeneMean
+    )
+
+    return(summary_df)
+}
+```
+
+```{r}
+btvr_sim <- get_BTVR(rowData(sim) %>% as.data.frame())
+btvr <- btvr_sim
+```
+
+# run anglemania
+```{r}
+angl <- create_anglemania_object(
+    sim,
+    batch_key = "Batch"
+)
+angl <- anglemania(angl)
+
+```
+
+## create a df with anglemania genes and varying zscore_mean_thresholds and zscore_snr_thresholds
+```{r}
+dparams_raw <- expand.grid(
+    zscore_mean_threshold = seq(0.5, 4, 0.25),
+    zscore_snr_threshold = seq(0.5, 4, 0.25)
+)
+dparams_raw <- dparams_raw %>%
+    rowwise() %>%
+    mutate(angl_genes = list(select_genes(angl, zscore_mean_threshold = zscore_mean_threshold, zscore_sn_threshold = zscore_snr_threshold) %>% get_anglemania_genes())) %>%
+    ungroup()
+
+```
+
+```{r}
+dparams <- dparams_raw
+dparams$btvr <- list(btvr)
+```
+
+```{r}
+dparams <- dparams %>%
+    mutate(btvr_dist = pmap(
+        list(angl_genes, btvr),
+        ~ {
+            genes <- unique(c(..1))
+            # Create a tibble for genes with their BTVR values
+            merged_tbl <- ..2 %>%
+                dplyr::filter(gene %in% genes) %>%
+                mutate(
+                    angl = gene %in% ..1
+                )
+            # Return the new tibble
+            merged_tbl
+        }
+    ))
+
+dparams <- dparams %>%
+    rowwise() %>%
+    mutate(btvr_dist = list(btvr_dist %>% pivot_longer(
+        cols = c(angl),
+        names_to = "gene_selection",
+        values_to = "is_selected"
+    ) %>% filter(is_selected)))
+
+```
+
+```{r}
+unnested <- dparams %>%
+    select(-btvr, -angl_genes) %>%
+    unnest(btvr_dist) %>%
+    ungroup() %>%
+    filter(!is.infinite(BTVR)) # there was one gene (!) that had 0 TechVar so BTVR was infinite, but really only 1 gene lol.
+
+head(unnested)
+
+```
+
+# plot heatmaps
+## BTVR
+
+```{r}
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "BTVR",
+        fill = "mean"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_mean_BTVR_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "BTVR",
+        fill = "median"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_median_BTVR_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+```
+
+## GeneScore
+```{r}
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "GeneScore",
+        fill = "mean"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_mean_GeneScore_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "GeneScore",
+        fill = "median"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_median_GeneScore_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+```
+
+## number of angl genes
+```{r}
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "BTVR",
+        fill = "n"
+    )
+p
+
+ggsave(
+    file.path(outplot, glue("{today}_n_angl_genes_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+```
+
+## TechVar
+```{r}
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "TechVar",
+        fill = "mean"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_mean_TechVar_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "TechVar",
+        fill = "median"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_median_TechVar_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "raw_TechVar",
+        fill = "mean"
+    )
+p
+
+ggsave(
+    file.path(outplot, glue("{today}_mean_rawTechVar_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+```
+
+## BioVar
+```{r}
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "BioVar",
+        fill = "mean"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_mean_BioVar_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+p <- unnested %>%
+    draw_heatmap_thresholds_vis(
+        score = "BioVar",
+        fill = "median"
+    )
+p
+ggsave(
+    file.path(outplot, glue("{today}_median_BioVar_heatmap.pdf")),
+    plot = p,
+    width = 11,
+    height = 8
+)
+```
+
+```{r}
+```

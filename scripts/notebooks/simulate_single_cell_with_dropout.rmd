@@ -1,0 +1,230 @@
+```{r}
+.libPaths(.Library)
+suppressPackageStartupMessages({
+    library(splatter)
+    library(stringr)
+    library(dplyr)
+    library(tidyverse)
+    library(tibble)
+    library(jsonlite)
+    library(pbapply)
+    library(anndataR)
+})
+```
+
+# Create parameters for simulation scenarios with different dropout rates 
+* use dropout.mid argument in splatter
+* use one combination of nbatch and ngroup only => otherwise it gets unnecessarily big
+
+```{r}
+facLocs <- c(0, 0.001, 0.01, 0.05, 0.1, 0.3, 0.6)
+dparams <- expand.grid(
+    batch.facLoc = facLocs, # Strength of batch effect
+    de.facLoc = facLocs, # Biological variability
+    nbatch = 4, # Number of batches
+    ngroup =  4, # Number of cell types
+    groupCells = 600, # Number of cells per cell type (adjust as needed)
+    stringsAsFactors = FALSE,
+    dropout.mid = c(0.5, 1, 1.5, 2, 2.5, 3, 3.5),
+    dropout.shape = c(-2, -1, 0, 1, 2)
+)
+names(dparams)
+
+outdir <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim"
+samplesheet_low_facloc <- dparams %>%
+    mutate(sample_name = across(everything(), ~ paste0(cur_column(), .x))) %>%
+    rowwise() %>%
+    mutate(sample_name = paste(sample_name, collapse = "_")) %>%
+    ungroup() %>%
+    mutate(original_h5ad = file.path(outdir, paste0(sample_name, ".h5ad"))) %>%
+    select(sample_name, original_h5ad, everything()) %>%
+    distinct()
+colnames(samplesheet_low_facloc)
+
+samplesheet_low_facloc$file_path <- samplesheet_low_facloc$original_h5ad
+# write.table(samplesheet_low_facloc, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim/samplesheet_low_facLoc.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+```
+
+
+# simulation function
+```{r}
+create_and_save_sim <- function(
+    sample_name,
+    ngroup,
+    nbatch,
+    groupCells,
+    batch.facLoc,
+    de.facLoc,
+    outfile = NULL,
+    dropout.mid){
+
+    if (!file.exists(outfile)) {
+        print(paste0("Processing ", sample_name, " with params:"))
+        print(knitr::kable(cbind(ngroup, nbatch, batch.facLoc, de.facLoc, dropout.mid)))
+        set.seed(42)
+        message("Simulating data")
+
+        sim = splatSimulate(
+            batchCells = rep(groupCells * ngroup, nbatch),
+            group.prob = rep(1/ngroup, ngroup),
+            batch.facLoc = batch.facLoc,
+            batch.facScale = 0.1,
+            method = "groups",
+            verbose = FALSE,
+            out.prob    = 0.001,
+            de.prob     = 0.1,
+            de.facLoc   = de.facLoc,
+            de.facScale = 0.1,
+            bcv.common  = 0.1,
+            dropout.mid = dropout.mid,
+            dropout.type = "experiment" # “experiment” is global dropout using the same set of parameters for every cell
+        )
+
+        counts <- t(counts(sim)) %>% as.matrix() # for AnnData the matrix is transposed: Gene in columns Cells in rows
+        metadata <- colData(sim) %>% as.data.frame()
+        var <- rowData(sim) %>% as.data.frame()
+
+        message("Creating AnnData object")
+        adata <- anndataR::AnnData(
+                            X = counts,
+                            obs = metadata,
+                            var = var
+                        )
+        message(paste0("Saving ", outfile))
+        anndataR::write_h5ad(adata, path = outfile, mode = "w", compression = "none")
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+}
+```
+
+# run and save simulations
+```{r}
+library(doMC)
+registerDoMC(25)
+foreach(i = 1:nrow(samplesheet_low_facloc))%dopar%{
+    set.seed(42)
+    dparam = samplesheet_low_facloc[i,]
+    create_and_save_sim(
+        dparam$sample_name,
+        dparam$ngroup,
+        dparam$nbatch,
+        dparam$groupCells,
+        dparam$batch.facLoc,
+        dparam$de.facLoc,
+        dparam$original_h5ad,
+        dparam$dropout.mid
+    )
+}
+```
+
+# temporary
+```{r}
+create_and_save_sim_temp <- function(
+    sample_name,
+    ngroup,
+    nbatch,
+    groupCells,
+    batch.facLoc,
+    de.facLoc,
+    dropout.mid,
+    dropout.shape
+    ) {
+
+    print(paste0("Processing ", sample_name, " with params:"))
+    print(knitr::kable(cbind(ngroup, nbatch, batch.facLoc, de.facLoc, dropout.mid, dropout.shape)))
+    set.seed(42)
+    message("Simulating data")
+
+    sim <- splatSimulate(
+        batchCells = rep(groupCells * ngroup, nbatch),
+        group.prob = rep(1 / ngroup, ngroup),
+        batch.facLoc = batch.facLoc,
+        batch.facScale = 0.1,
+        method = "groups",
+        verbose = FALSE,
+        out.prob = 0.001,
+        de.prob = 0.1,
+        de.facLoc = de.facLoc,
+        de.facScale = 0.1,
+        bcv.common = 0.1,
+        dropout.mid = dropout.mid,
+        dropout.type = "experiment", # “experiment” is global dropout using the same set of parameters for every cell
+        dropout.shape = dropout.shape
+    )
+
+    counts <- t(counts(sim)) %>% as.matrix() # for AnnData the matrix is transposed: Gene in columns Cells in rows
+    metadata <- colData(sim) %>% as.data.frame()
+    var <- rowData(sim) %>% as.data.frame()
+
+    message("Creating AnnData object")
+    adata <- anndataR::AnnData(
+        X = counts,
+        obs = metadata,
+        var = var
+    )
+    return(adata)
+}
+```
+
+```{r}
+head(dparams)
+filt_params <- samplesheet_low_facloc %>%
+    filter(
+        nbatch == 4,
+        ngroup == 4,
+        batch.facLoc == 0.1,
+        de.facLoc == 0.1,
+        dropout.mid == 1.5
+    )
+
+```
+
+```{r}
+adatas <- list()
+for (i in 1:nrow(filt_params)) {
+    set.seed(42)
+    dparam <- filt_params[i, ]
+    print(dparam)
+    adatas[[as.character(dparam$dropout.shape)]] <- create_and_save_sim_temp(
+        dparam$sample_name,
+        dparam$ngroup,
+        dparam$nbatch,
+        dparam$groupCells,
+        dparam$batch.facLoc,
+        dparam$de.facLoc,
+        dparam$dropout.mid,
+        dparam$dropout.shape
+    )
+}
+
+
+```
+
+```{r}
+# Define a function to calculate statistics for a given matrix:
+calc_stats <- function(adata) {
+    mat <- adata$X
+    data.frame(
+        mean   = mean(mat, na.rm = TRUE),
+        median = median(mat, na.rm = TRUE),
+        q25    = quantile(mat, 0.25, na.rm = TRUE),
+        q75    = quantile(mat, 0.75, na.rm = TRUE)
+    )
+}
+
+# Apply the function to each matrix in the list:
+stats_list <- pblapply(adatas, calc_stats, cl = 5)
+
+# Combine the list of data frames into a single data frame:
+stats_df <- do.call(rbind, stats_list)
+stats_df$k <- rownames(stats_df)
+stats_df
+stats_df %>%
+    ggplot(aes(reorder(k, as.numeric(k)), mean)) +
+    geom_point()
+
+
+
+```
