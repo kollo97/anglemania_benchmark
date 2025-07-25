@@ -1,0 +1,20 @@
+name: Theis_dropout_simulations
+
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/Theis_sim/samplesheet.json"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/Theis_sim/"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+zscore_mean_threshold: 2.5
+zscore_snr_threshold: 2.5
+
+integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
+gene_selection: [ "hvg", "angl"] #"full", "rand", 
+gpu: False
+

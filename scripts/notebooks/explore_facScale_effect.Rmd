@@ -1,0 +1,150 @@
+---
+title: "it is enough to have a constant facScale 0.1 or 0.2"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+
+---
+
+```{r}
+library(splatter)
+library(ggplot2)
+library(tidyverse)
+```
+
+```{r}
+getLNormFactors <- function(n.facs, sel.prob, neg.prob, fac.loc, fac.scale) {
+    is.selected <- as.logical(rbinom(n.facs, 1, sel.prob))
+    n.selected <- sum(is.selected)
+    dir.selected <- (-1)^rbinom(n.selected, 1, neg.prob)
+    facs.selected <- rlnorm(n.selected, fac.loc, fac.scale)
+    # Reverse directions for factors that are less than one
+    dir.selected[facs.selected < 1] <- -1 * dir.selected[facs.selected < 1]
+    factors <- rep(1, n.facs)
+    factors[is.selected] <- facs.selected^dir.selected
+
+    return(factors)
+}
+```
+
+# explore changing fac.scales
+```{r, fac scales}
+nCells <- 1000
+n.facs <- nCells
+sel.prob <- 1
+neg.prob <- 0.5
+fac.loc <- 0.1
+fac.scales <- c(0, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.6)
+
+df <- map_dfr(fac.scales, function(scale) {
+    tibble(
+        fac.scale = scale,
+        factor = getLNormFactors(nCells, sel.prob, neg.prob, fac.loc, scale)
+    )
+})
+
+```
+
+```{r}
+# Density plot
+ggplot(df, aes(x = factor, color = as.factor(fac.scale))) +
+    geom_density(alpha = 0.3) +
+    labs(title = "Density of Factors", color = "fac.scale")
+
+# Boxplot
+ggplot(df, aes(x = as.factor(fac.scale), y = factor, color = as.factor(fac.scale))) +
+    geom_boxplot() +
+    labs(title = "Factor Distributions by fac.scale", x = "fac.scale", y = "Factor")
+
+```
+
+# explore changing fac.loc
+```{r, fac locs}
+fac.locs <- c(0, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.6)
+nCells <- 1000
+n.facs <- nCells
+sel.prob <- 1
+neg.prob <- 0.5
+fac.scale <- 0.2
+
+facloc_df <- map_dfr(fac.locs, function(loc) {
+    tibble(
+        fac.loc = loc,
+        factor = getLNormFactors(nCells, sel.prob, neg.prob, loc, fac.scale)
+    )
+})
+min(facloc_df$factor)
+
+```
+
+```{r}
+# Density plot
+facloc_df %>%
+    ggplot(aes(x = factor, fill = as.factor(fac.loc))) +
+    geom_histogram(alpha = 0.5, bins = 50) +
+    labs(title = "Histogram of Factors", color = "fac.loc")
+facloc_df %>%
+    ggplot(aes(x = factor, color = as.factor(fac.loc))) +
+    geom_density(alpha = 0.3) +
+    labs(title = "Density of Factors", color = "fac.loc")
+
+facloc_df %>%
+    ggplot(aes(x = as.factor(fac.loc), y = factor, color = as.factor(fac.loc))) +
+    geom_boxplot() +
+    labs(title = "Factor Distributions by fac.loc", x = "fac.loc", y = "Factor")
+```
+
+# explore changing both fac.loc and fac.scale
+```{r, fac loc and scale}
+fac.locs <- c(0, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.6)
+fac.scales <- c(0, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.6)
+nCells <- 500
+sel.prob <- 1
+neg.prob <- 0.5
+
+# Generate tidy data
+fac_df <- expand_grid(fac.loc = fac.locs, fac.scale = fac.scales) %>%
+    mutate(factors = map2(fac.loc, fac.scale, ~ getLNormFactors(nCells, sel.prob, neg.prob, .x, .y))) %>%
+    unnest(factors) %>%
+    mutate(
+        combolocscale = paste0("loc", fac.loc, "_scale", fac.scale),
+        comboscaleloc = paste0("scale", fac.scale, "_loc", fac.loc)
+    )
+
+
+```
+
+```{r, fig.width = 20, fig.height = 8, out.width = "150%", out.height = "150%"}
+# Density plot
+fac_df %>%
+    ggplot(aes(x = factors, color = as.factor(combolocscale))) +
+    geom_density(alpha = 0.3) +
+    labs(title = "Density of Factors", color = "fac.loc and fac.scale")
+
+fac_df %>%
+    ggplot(aes(x = as.factor(combolocscale), y = factors, color = as.factor(combolocscale))) +
+    geom_boxplot() +
+    labs(title = "Factor Distributions by fac.loc and fac.scale", x = "fac.loc and fac.scale", y = "Factor") +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+fac_df %>%
+    ggplot(aes(x = as.factor(comboscaleloc), y = factors, color = as.factor(comboscaleloc))) +
+    geom_boxplot() +
+    labs(title = "Factor Distributions by fac.loc and fac.scale", x = "fac.loc and fac.scale", y = "Factor") +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+fac_df %>%
+    ggplot(aes(x = as.factor(comboscaleloc), y = log2(factors), color = as.factor(comboscaleloc))) +
+    geom_boxplot() +
+    labs(title = "Factor Distributions by fac.loc and fac.scale", x = "fac.loc and fac.scale", y = "Factor") +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+```
+

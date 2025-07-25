@@ -34,14 +34,16 @@ library(pbapply)
 source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
 library(glue)
 library(corrplot)
-today <- format(Sys.Date(), "%Y%m%d")
+today <- function() {
+  format(Sys.Date(), "%Y%m%d")
+}
 ```
 
 
 # Load data
 ```{r}
-gene_files <- list.files("/data/akalin/akollot/anglemania_benchmark/simulated/preprocessed", full.names = TRUE)
-samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_low_facLoc.tsv", sep = "\t")
+gene_files <- list.files("/data/akalin/akollot/anglemania_benchmark/simulated/facScale0.1/groupCells1000/preprocessed", full.names = TRUE)
+samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_facScale0.1.tsv", sep = "\t")
 zscore_mean_threshold <- 2.5
 zscore_snr_threshold <- 2.5
 find_matching_files <- function(sample_name, files) {
@@ -66,12 +68,15 @@ expanded <- samplesheet %>%
 ```
 
 ```{r}
-outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/compare_gene_selections"
+outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/compare_gene_selections/facScale0.1/groupCells1000/"
+if (!dir.exists(outplot)) {
+  dir.create(outplot, recursive = TRUE)
+}
 ```
 
 ```{r, include=FALSE}
 # test_sample <- expanded %>%
-#     filter(sample_name == expanded$sample_name[1]) %>%
+#     filter(sample_name == expanded$sample_name[1]) %>
 #     rowwise() %>%
 #     mutate(genes = list(read.csv(tsv_files, sep = "\t", header = T) %>% pull(hgnc_symbol))) %>%
 #     unnest(genes)
@@ -154,7 +159,7 @@ result <- expanded %>%
 result <- result %>%
   pivot_wider(names_from = gene_selection, values_from = tsv_files) %>%
   rowwise() %>%
-  mutate(angl = list(read.csv(angl, sep = "\t", header = T) %>% pull(hgnc_symbol)),
+  dplyr::mutate(angl = list(read.csv(angl, sep = "\t", header = T) %>% pull(hgnc_symbol)),
          hvg = list(read.csv(hvg, sep = "\t", header = T) %>% pull(hgnc_symbol)))
 # saveRDS(result, file = "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/compare_gene_selections_result.RDS")
 # result <- readRDS("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/compare_gene_selections_result.RDS")
@@ -228,7 +233,7 @@ p <- for_plot %>%
         axis.text.x = element_text(angle = 20, hjust = 1))
 p
 ggsave(
-  file = file.path(outplot, glue("{today}_Biological_Variability_vs_intersection_size.pdf")),
+  file = file.path(outplot, glue("{today()}_Biological_Variability_vs_intersection_size.pdf")),
   plot = p,
   width = 6,
   height = 5
@@ -254,7 +259,7 @@ p <- for_plot %>%
 p
 
 ggsave(
-  file = file.path(outplot, glue("{today}_Technical_Variability_vs_intersection_size.pdf")),
+  file = file.path(outplot, glue("{today()}_Technical_Variability_vs_intersection_size.pdf")),
   plot = p,
   width = 6,
   height = 5)
@@ -458,12 +463,12 @@ p
 ggsave(
   file.path(
     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_manuscript/plots/",
-    glue("{today}_mean_BTVR_heatmap.pdf")),
+    glue("{today()}_mean_BTVR_heatmap.pdf")),
   width = 11,
   height = 8
 )
 ggsave(
-  file.path(outplot, glue("{today}_mean_BTVR_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_mean_BTVR_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -483,12 +488,12 @@ p
 ggsave(
   file.path(
     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_manuscript/plots/", 
-    glue("{today}_median_BTVR_heatmap.pdf")),
+    glue("{today()}_median_BTVR_heatmap.pdf")),
   width = 11,
   height = 8
 )
 ggsave(
-  file.path(outplot, glue("{today}_median_BTVR_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_median_BTVR_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -512,12 +517,12 @@ p
 ggsave(
   file.path(
     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_manuscript/plots/",
-    glue("{today}_mean_BTVR-Scaled-by-BioVar_heatmap.pdf")),
+    glue("{today()}_mean_BTVR-Scaled-by-BioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
 ggsave(
-  file.path(outplot, glue("{today}_mean_BTVR-Scaled-by-BioVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_mean_BTVR-Scaled-by-BioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -538,12 +543,12 @@ p
 ggsave(
   file.path(
     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_manuscript/plots/",
-    glue("{today}_median_BTVR-Scaled-by-BioVar_heatmap.pdf")),
+    glue("{today()}_median_BTVR-Scaled-by-BioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
 ggsave(
-  file.path(outplot, glue("{today}_median_BTVR-Scaled-by-BioVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_median_BTVR-Scaled-by-BioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -563,7 +568,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_mean_BioVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_mean_BioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -581,7 +586,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_median_BioVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_median_BioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -603,7 +608,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_mean_rawBioVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_mean_rawBioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -621,7 +626,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_median_rawBioVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_median_rawBioVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -643,7 +648,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_mean_TechVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_mean_TechVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -672,7 +677,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_median_TechVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_median_TechVar_heatmap.pdf")),
   width = 11,
   height = 8)
 ```
@@ -701,7 +706,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_mean_rawlogTechVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_mean_rawlogTechVar_heatmap.pdf")),
   width = 11,
   height = 8
 )
@@ -729,7 +734,7 @@ p <- unnested %>%
 p
 
 ggsave(
-  file.path(outplot, glue("{today}_median_rawlogTechVar_heatmap.pdf")),
+  file.path(outplot, glue("{today()}_median_rawlogTechVar_heatmap.pdf")),
   width = 11,
   height = 8)
 ```

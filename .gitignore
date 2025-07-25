@@ -1,0 +1,8 @@
+slurm_out*
+scripts/.ipynb_checkpoints*
+scripts/playground*
+.vscode/
+.snakemake
+output/snakemake_logs/
+output/
+scripts/pipeline_scripts/__pycache__

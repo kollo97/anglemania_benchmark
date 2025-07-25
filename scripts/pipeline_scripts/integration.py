@@ -18,7 +18,7 @@ from os.path import join
               default="/data/akalin/akollot/anglemania_benchmark/data/pbmcsca/adata.h5ad", 
               help="File location of the original h5ad input file")
 @click.option("--feature_subset", 
-              default="/data/akalin/akollot/anglemania_benchmark/data/pbmcsca/adata_hvg.tsv", 
+              default=None, 
               help="File location of the h5ad input file")
 @click.option("--outfile", 
               default="/data/akalin/akollot/anglemania_benchmark/results/pbmcsca/integrated/test.h5ad", 
@@ -38,12 +38,10 @@ from os.path import join
 # MAIN FUNCTION
 #------------------------------------------------------------------------------#
 
-def integrate(infile, feature_subset, outfile, integration_method, batch_key, label_key=None):
+def integrate(infile, feature_subset = None, outfile, integration_method, batch_key, label_key=None):
     click.secho(f"Input file is: {infile}", fg="bright_yellow", err=True)
     click.secho("Reading input file...", fg="bright_yellow", err=True)
 
-    selected_features  = pd.read_csv(feature_subset, sep = "\t")
-    selected_features = selected_features.hgnc_symbol.to_list()
     adata = ad.read_h5ad(infile)
     # COMMENT: I ran into errors with scanorama because the cells are not sorted by batch. 
     # https://github.com/brianhie/scanorama/discussions/131
@@ -54,8 +52,10 @@ def integrate(infile, feature_subset, outfile, integration_method, batch_key, la
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     adata.layers["logcounts"] = adata.X.copy()
-
-    adata = adata[:, selected_features].copy()
+    if feature_subset is not None:
+        selected_features  = pd.read_csv(feature_subset, sep = "\t")
+        selected_features = selected_features.hgnc_symbol.to_list()
+        adata = adata[:, selected_features].copy()
     # layers["data"] is the normalized data
     
     if integration_method == "harmony":

@@ -1,0 +1,25 @@
+name: facScale01_groupCells1000
+
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_facScale0.1.tsv"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/facScale0.1/groupCells1000/"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+zscore_mean_threshold: 2.5
+zscore_snr_threshold: 2.5
+
+integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
+gene_selection: [ "hvg", "angl"] #"full", "rand", 
+gpu: False
+
+visualization:
+  preprocessed_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/facScale0.1/groupCells1000/preprocessed/"
+  metrics_file: "/data/akalin/akollot/anglemania_benchmark/simulated/facScale0.1/groupCells1000/metrics/facScale01_groupCells1000_combined_metrics.tsv"
+  outplot_dir_bm_visualization: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_simulated_visualization/facScale0.1/groupCells1000/"
+  outplot_dir_compare_gene_selection: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/compare_gene_selections/facScale0.1/groupCells1000/"

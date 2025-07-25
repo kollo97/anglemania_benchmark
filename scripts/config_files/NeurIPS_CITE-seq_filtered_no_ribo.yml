@@ -1,0 +1,20 @@
+name: NeurIPS_CITE-seq_filtered_no_ribo
+
+samplesheet: "/data/akalin/akollot/anglemania_benchmark/data/NeurIPS_2021/CITE-seq_CMBC/filtered_custom/samplesheet.tsv"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/results/NeurIPS_2021/filtered_custom/"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+
+batch_key: "batch"
+label_key: "cell_type"
+anglemania_mode: "cosine"
+zscore_mean_threshold: 2.5
+zscore_snr_threshold: 2.5
+
+integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
+gene_selection: [ "hvg", "angl"] #"full", "rand", 
+gpu: False
+

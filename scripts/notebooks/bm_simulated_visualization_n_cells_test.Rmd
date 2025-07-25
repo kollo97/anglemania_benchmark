@@ -33,7 +33,7 @@ library(yaml)
 
 # Load config
 ```{r}
-cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_varying_batch_biovar_facScale0.1.yml")
+cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_n_cells_test.yml")
 ```
 
 # Load metrics
@@ -48,14 +48,13 @@ if (!dir.exists(outplot_bm)) {
 }
 
 # Load data
-metrics <- read.delim(metrics_path)
-samplesheet <- read.delim(samplesheet_path)
+metrics <- read_tsv(metrics_path)
+samplesheet <- read_tsv(samplesheet_path)
 
 metrics <- metrics %>%
   left_join(samplesheet %>% select(-original_h5ad), by = join_by(sample == sample_name)) %>%
   mutate(
-    de.facLoc = factor(de.facLoc),
-    batch.facLoc = factor(batch.facLoc),
+    groupCells = factor(groupCells),
     gene_selection = factor(gene_selection),
     integration_method = factor(integration_method)
   )
@@ -66,122 +65,34 @@ View(metrics)
 
 
 # Plot
-## Heatmap integration score as a function of biol. variab. and batch effects
-```{r}
-for (m in unique(metrics$integration_method)) {
-  for (i in unique(metrics$ngroup)) {
-    for (j in unique(metrics$nbatch)) {
-      p <- metrics %>%
-        filter(ngroup == i, nbatch == j, integration_method == m) %>%
-        ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
-        geom_tile(aes(fill = Total, color = Total)) +
-        coord_equal() +
-        labs(x = "Batch Effects", y = "Biological Variability", title = paste0(m, "-ngroup", i, "-nbatch", j, "-TotalScore"))
-      print(p)
-    }
-  }
-}
-p <- metrics %>%
-  ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
-  geom_tile(aes(fill = Total, color = Total)) +
-  coord_equal() +
-  scale_fill_viridis_c() +
-  facet_wrap(~gene_selection+integration_method)
-p
-
-# p <- metrics %>% 
-#   ggplot(aes(x = de.facLoc, y = Total))+
-#   geom_point(aes(color = batch.facLoc, shape = gene_selection))+
-#   facet_wrap(~gene_selection+integration_method)
-# p
-
-```
-
-```{r}
-for (m in unique(metrics$integration_method)) {
-  for (g in unique(metrics$gene_selection)) {
-    p <- metrics %>%
-      filter(integration_method == m, gene_selection == g) %>%
-      summarise(
-        mean_score = mean(Total),
-        median_score = median(Total),
-        integration_method = m,
-        de.facLoc = de.facLoc,
-        batch.facLoc = batch.facLoc,
-        .by = c(de.facLoc, batch.facLoc)
-      ) %>%
-      distinct() %>% 
-      ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
-        geom_tile(aes(fill = mean_score)) +
-        geom_text(aes(label = round(mean_score, 2)), color = "black", size = 4) +  # Add text to tiles
-        scale_fill_gradient(low ="grey", high = "#64487A", limits=c(0,1))+
-        coord_equal() +
-        labs(x = "Batch Effects", y = "Biological Variability", title = paste0(m, " - ", g, " - mean Total Score"))
-    print(p)
-  }
-}
-```
-
-```{r}
-for (m in unique(metrics$integration_method)) {
-  for (g in unique(metrics$gene_selection)) {
-    p <- metrics %>%
-      filter(integration_method == m, gene_selection == g) %>%
-      summarise(
-        mean_score = mean(Total),
-        median_score = median(Total),
-        integration_method = m,
-        de.facLoc = de.facLoc,
-        batch.facLoc = batch.facLoc,
-        .by = c(de.facLoc, batch.facLoc)
-      ) %>%
-      distinct() %>% 
-      ggplot(aes(x = batch.facLoc, y = de.facLoc)) +
-        geom_tile(aes(fill = median_score)) +
-        geom_text(aes(label = round(median_score, 2)), color = "black", size = 4) +  # Add text to tiles
-        scale_fill_gradient(low ="grey", high = "#64487A", limits=c(0,1))+
-        coord_equal() +
-        labs(x = "Batch Effects", y = "Biological Variability", title = paste0(m, " - ", g, " - median Total Score"))
-    print(p)
-  }
-}
-```
-
 ## violin plots
 ### Total Score
 ```{r}
 dodge <- position_dodge(width = 0.7)
 for (m in unique(metrics$integration_method)) {
-  for (i in unique(metrics$ngroup)) {
-    for (j in unique(metrics$nbatch)) {
-      p <- metrics %>%
-        filter(ngroup == i, nbatch == j, integration_method == m) %>%
-        ggplot(aes(x = as.factor(de.facLoc), y = Total)) +
-        # geom_violin(aes(fill = gene_selection), position = dodge, width = 2)+
-        geom_boxplot(width = 0.5, aes(fill = gene_selection), position = dodge) +
-        geom_jitter(aes(fill = gene_selection), alpha = 0.7, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)) +
-        # make manual color
-        scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey"))+
-        theme_bw() +
-        labs(x = "Biological Variability", y = "Integration Score", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
-        ylim(0, 1) +
-        # increase font size of all text
-        theme(
-          text = element_text(size = 20, face = "bold"),
-          aspect.ratio = 1,
-          legend.position = c(0.8, 0.1)
-        )
+  p <- metrics %>%
+    filter(integration_method == m) %>%
+    ggplot(aes(x = as.factor(groupCells), y = Total, fill = gene_selection)) +
+    geom_bar(width = 0.5, position = "dodge", stat = "identity") +
+    scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+    theme_bw() +
+    labs(x = "Number of Cells", y = "Integration Score", title = paste0(m, "_TotalScore_violin")) +
+    ylim(0, 1) +
+    theme(
+      text = element_text(size = 30, face = "bold"),
+      aspect.ratio = 1,
+      legend.position = c(0.8, 0.1)
+    )
 
-        print(p)
-        ggsave(
-            file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_TotalScore_violin.pdf")),
-            width = 5,
-            height = 5,
-            plot = p
-        )
+  print(p)
+      # ggsave(
+      #   file.path(outplot_bm, paste0(m, "_TotalScore_bar.pdf")),
+      #   width = 10, 
+      #   height = 10,
+      #   plot = p
+      #   ) 
     }
-  }
-}
+  
 
 ```
 
@@ -259,7 +170,7 @@ for (m in unique(metrics$integration_method)) {
         )
         print(p)
         ggsave(
-          file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_BioConservation_violin.pdf")),
+          file.path(outplot, paste0(m, "_ngroup", i, "_nbatch", j, "_BioConservation_violin.pdf")),
           width = 10,
           height = 10,
           plot = p
@@ -294,7 +205,7 @@ for (m in unique(metrics$integration_method)) {
         )
       print(p)
       ggsave(
-        file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_BatchCorrection_violin.pdf")),
+        file.path(outplot, paste0(m, "_ngroup", i, "_nbatch", j, "_BatchCorrection_violin.pdf")),
         width = 10,
         height = 10,
         plot = p
