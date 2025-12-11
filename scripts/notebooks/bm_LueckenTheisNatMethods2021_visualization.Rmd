@@ -30,44 +30,28 @@ library(anndataR)
 library(matrixStats)
 ```
 
+# Load config
+```{r}
+cfg <- yaml::read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/LueckenTheis_config.yml")
+```
 
 # Load metrics
 ```{r}
-metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021/metrics/combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
-head(metrics)
-colnames(metrics)
-samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/data/Luecken_Theis_NatMethods_2021_benchmarking/samplesheet.tsv", sep = "\t", stringsAsFactors = FALSE)
+# Extract relevant paths
+metrics_path <- cfg$visualization$metrics_file
+samplesheet_path <- cfg$samplesheet
+outplot_bm <- cfg$visualization$outplot_dir_bm_visualization
+# Ensure plot directories exist
+if (!dir.exists(outplot_bm)) {
+  dir.create(outplot_bm, recursive = TRUE, showWarnings = FALSE)
+}
 
-
+# Load data
+metrics <- read.delim(metrics_path)
+samplesheet <- read.delim(samplesheet_path)
 metrics <- metrics %>%
   left_join(samplesheet, by = join_by(sample == sample_name))
 
-# metrics["Batch"] = metrics[["ASW_label/batch", "PCR_batch", "graph_conn"]].mean(axis=1)
-# metrics["Bio"] = metrics[["ASW_label", "isolated_label_silhouette"]].mean(axis=1)
-bio_metrics <- c("cLISI", "ARI_cluster.label", "NMI_cluster.label", "ASW_label", "isolated_label_F1", "isolated_label_silhouette")
-batch_metrics <- c("kBET", "ASW_label.batch", "iLISI")
-
-# calculate weighted mean with 0.6 for bio and 0.4 for batch
-# first min max scale every metrics
-#metrics_scaled = (metrics - metrics.min()) / (metrics.max() - metrics.min())
-min_max_norm <- function(x) {
-    (x - min(x)) / (max(x) - min(x))
-  }
-
-metrics_scaled <- metrics %>%
-  # scale data
-  # mutate(across(all_of(bio_metrics), ~ min_max_norm(.) %>% as.vector), .by = c(integration_method, sample)) %>%
-  # mutate(across(all_of(batch_metrics), ~ min_max_norm(.) %>% as.vector), .by = c(integration_method, sample)) %>%
-  rowwise() %>%
-  mutate(
-    bio_score = mean(c_across(all_of(bio_metrics))),
-    batch_score = mean(c_across(all_of(batch_metrics))),
-    overall_score = 0.6 * bio_score + 0.4 * batch_score
-  ) %>%
-  ungroup()
-
-View(metrics_scaled)
-colnames(metrics_scaled)
 ```
 
 # Plot
@@ -75,20 +59,26 @@ colnames(metrics_scaled)
 ```{r}
 dodge <- position_dodge(width = 0.7)
 
-p <- metrics_scaled %>% 
-  ggplot(aes(x = as.factor(gene_selection), y = overall_score))+
+p <- metrics %>% 
+  ggplot(aes(x = as.factor(gene_selection), y = Total))+
   geom_bar(aes(fill = gene_selection), stat = "identity")+
   facet_wrap(~integration_method+sample, ncol = 6)
 p
+
+ggsave(
+  file = file.path(outplot_bm, "combined_barplot.pdf"),
+  width = 20,
+  height = 10,
+  units = "cm")
 ```
 
 ## individual bar plot
 ```{r}
-for (m in unique(metrics_scaled$integration_method)){
-  for(s in unique(metrics_scaled$sample)){
-    p <- metrics_scaled %>%
+for (m in unique(metrics$integration_method)){
+  for(s in unique(metrics$sample)){
+    p <- metrics %>%
       filter(integration_method == m, sample == s) %>%
-      ggplot(aes(x = as.factor(gene_selection), y = overall_score)) +
+      ggplot(aes(x = as.factor(gene_selection), y = Total)) +
       geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
       scale_y_continuous(limits = c(0, 1)) +
       theme_minimal() +
@@ -101,11 +91,11 @@ for (m in unique(metrics_scaled$integration_method)){
       labs(x = "Gene Selection", y = "Integration Score", title = paste0("integration method:", m, "\nsample: ", s))
 
     print(p)
-    ggsave(
-      file = file.path(outplot, paste0("gene_selection_vs_integration_score_", m, "_", s, ".pdf")),
-      width = 11,
-      height = 10,
-      units = "cm")
+    # ggsave(
+    #   file = file.path(outplot, paste0("gene_selection_vs_integration_score_", m, "_", s, ".pdf")),
+    #   width = 11,
+    #   height = 10,
+    #   units = "cm")
   }
 }
 ```

@@ -1,0 +1,25 @@
+name: dropout_own_sim
+
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim/samplesheet.tsv"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/anglemania_ranking/with_dropout/own_sim/"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+permutation_function: "sample"
+n_genes: 2000
+
+integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
+gene_selection: [ "hvg", "angl"] #"full", "rand", 
+gpu: False
+
+visualization:
+  preprocessed_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/anglemania_ranking/with_dropout/own_sim/preprocessed/"
+  metrics_file: "/data/akalin/akollot/anglemania_benchmark/simulated/anglemania_ranking/with_dropout/own_sim/metrics/dropout_own_sim_combined_metrics.tsv"
+  outplot_dir_bm_visualization: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_simulated_visualization_dropout/anglemania_ranking/own_sim/"
+  outplot_dir_compare_gene_selection: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/compare_gene_selections_dropout/anglemania_ranking/own_sim/"

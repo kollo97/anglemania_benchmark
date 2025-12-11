@@ -60,7 +60,7 @@ metrics <- metrics %>%
     integration_method = factor(integration_method)
   )
 
-View(metrics)
+head(metrics)
 ```
 
 
@@ -303,6 +303,8 @@ for (m in unique(metrics$integration_method)) {
   }
 }
 ```
-```{r}
 
+# session Info
+```{r}
+sessionInfo()
 ```

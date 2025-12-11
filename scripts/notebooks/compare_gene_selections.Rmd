@@ -296,7 +296,7 @@ get_BTVR <- function(rowdata) {
   #   rescale()
 
   # Compute BTVR directly
-  BTVR <- log(raw_BioVar + 1e-15 / raw_TechVar + 1e-15) %>% rescale()
+  BTVR <- log((raw_BioVar + 1e-15) / (raw_TechVar + 1e-15)) %>% rescale()
   GeneScore <- BTVR * BioVar #basically "scaled" by BioVar
 
   # Create result tibble

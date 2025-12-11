@@ -41,7 +41,7 @@ samplesheet_dropout <- dparams %>%
 colnames(samplesheet_dropout)
 
 samplesheet_dropout$file_path <- samplesheet_dropout$original_h5ad
-# write.table(samplesheet_low_facloc, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim/samplesheet.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(samplesheet_dropout, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim/samplesheet.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
 
 ```
 
@@ -72,7 +72,7 @@ splatparams_to_list <- function(obj) {
 #' @param ... Additional arguments passed to splatSimulate
 #' @return NULL
 # #' @export
-create_and_save_sim <- function(
+create_sim <- function(
     sample_name,
     ngroup,
     nbatch,
@@ -82,26 +82,22 @@ create_and_save_sim <- function(
     batch.facScale = 0.1, # splatter default
     de.facScale = 0.2, # default de.facScale is 0.4 but this is quite extreme!!
     nGenes = 10000, # splatter default
-    outfile,
+    dropout.mid,
+    dropout.shape,
+    dropout.type = "experiment",
     ...){
     library(splatter)
     library(dplyr)
     library(anndataR)
     library(SingleCellExperiment)
-    
-    if (!file.exists(outfile)) {
-        print(paste0("Processing ", sample_name, " with params:"))
-        print(knitr::kable(cbind(ngroup, nbatch, batch.facLoc, de.facLoc)))
-        set.seed(42)
-        message("Simulating data")
 
-        sim = splatSimulate(
+    sim = splatSimulate(
             batchCells = rep(groupCells * ngroup, nbatch),
             group.prob = rep(1 / ngroup, ngroup),
             batch.facLoc = batch.facLoc,
             batch.facScale = batch.facScale,
             batch.rmEffect = ifelse(batch.facLoc == 0, TRUE, FALSE),
-            #when batch.facLoc is 0, remove batch effect
+            # when batch.facLoc is 0, remove batch effect
             method = "groups",
             verbose = FALSE,
             out.prob = 0.001,
@@ -111,9 +107,14 @@ create_and_save_sim <- function(
             # default de.facScale is 0.4 but this is quite extreme!!
             bcv.common = 0.1,
             nGenes = nGenes,
+            dropout.mid = dropout.mid,
+            dropout.shape = dropout.shape,
+            dropout.type = dropout.type,
             ...
         )
-
+}
+    
+save_sim <- function(sim, outfile) {
         counts <- t(counts(sim)) %>% as.matrix() # for AnnData the matrix is transposed: Gene in columns Cells in rows
         metadata <- colData(sim) %>% as.data.frame()
         var <- rowData(sim) %>% as.data.frame()
@@ -129,6 +130,48 @@ create_and_save_sim <- function(
         message(paste0("Saving ", outfile))
         # file.remove(outfile)
         anndataR::write_h5ad(adata, path = outfile, mode = "w", compression = "none")
+}
+
+create_and_save_sim <- function(
+    sample_name,
+    ngroup,
+    nbatch,
+    groupCells,
+    batch.facLoc,
+    de.facLoc,
+    batch.facScale = 0.1, # splatter default
+    de.facScale = 0.2, # default de.facScale is 0.4 but this is quite extreme!!
+    nGenes = 10000, # splatter default
+    dropout.mid,
+    dropout.shape,
+    dropout.type = "experiment",
+    outfile,
+    ...){
+    if (!file.exists(outfile)) {
+        print(paste0("Processing ", sample_name, " with params:"))
+        print(knitr::kable(cbind(ngroup, nbatch, batch.facLoc, de.facLoc)))
+        set.seed(42)
+        message("Simulating data")
+
+    sim <- create_sim(
+        sample_name = sample_name,
+        ngroup = ngroup,
+        nbatch = nbatch,
+        groupCells = groupCells,
+        batch.facLoc = batch.facLoc,
+        de.facLoc = de.facLoc,
+        batch.facScale = batch.facScale,
+        de.facScale = de.facScale,
+        nGenes = nGenes,
+        dropout.mid = dropout.mid,
+        dropout.shape = dropout.shape,
+        dropout.type = dropout.type,
+        ...
+    )
+
+    save_sim(sim, outfile)
+    message(paste0("Saved ", outfile))
+
     } else {
         message(paste0(outfile, " already exists. Skipping..."))
     }
@@ -139,23 +182,37 @@ create_and_save_sim <- function(
 ```{r}
 library(doMC)
 registerDoMC(25)
-foreach(i = 1:nrow(samplesheet_low_facloc))%dopar%{
+foreach(i = seq_len(nrow(samplesheet_dropout)))%dopar%{
     set.seed(42)
-    dparam = samplesheet_low_facloc[i,]
+    dparam <- samplesheet_dropout[i, ]
     create_and_save_sim(
-        dparam$sample_name,
-        dparam$ngroup,
-        dparam$nbatch,
-        dparam$groupCells,
-        dparam$batch.facLoc,
-        dparam$de.facLoc,
-        dparam$original_h5ad,
-        dparam$dropout.mid
+        sample_name = dparam$sample_name,
+        ngroup = dparam$ngroup,
+        nbatch = dparam$nbatch,
+        groupCells = dparam$groupCells,
+        batch.facLoc = dparam$batch.facLoc,
+        de.facLoc = dparam$de.facLoc,
+        dropout.mid = dparam$dropout.mid,
+        dropout.shape = dparam$dropout.shape,
+        outfile = dparam$file_path
     )
 }
 ```
 
 # temporary
+## 16.09.25
+```{r}
+test1 <- read_h5ad(samplesheet_dropout$file_path[1])
+sum(test1$X == 0) / (nrow(test1$X) * ncol(test1$X))
+
+test2 <- read_h5ad(samplesheet_dropout$file_path[25])
+sum(test2$X == 0) / (nrow(test2$X) * ncol(test2$X))
+
+test3 <- read_h5ad(samplesheet_dropout$file_path[50])
+sum(test3$X == 0) / (nrow(test3$X) * ncol(test3$X))
+```
+
+## old
 ```{r}
 create_and_save_sim_temp <- function(
     sample_name,

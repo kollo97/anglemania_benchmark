@@ -1,0 +1,26 @@
+name: LueckenTheisBenchmark
+
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/data/Luecken_Theis_NatMethods_2021_benchmarking/datasets/samplesheet.tsv"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+
+batch_key: "batch"
+label_key: "celltype"
+anglemania_mode: "cosine"
+permutation_function: "sample"
+n_genes: 2000
+
+integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
+gene_selection: [ "hvg", "angl"] #"full", "rand", 
+gpu: False
+
+
+visualization:
+  preprocessed_dir: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021/preprocessed/"
+  metrics_file: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021/metrics/LueckenTheisBenchmark_combined_metrics.tsv"
+  outplot_dir_bm_visualization: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_LueckenTheisNatMethods2021_visualization"
+  

@@ -21,7 +21,6 @@ knitr::opts_chunk$set(fig.width = 14)
 ```
 
 ```{r}
-.libPaths(.Library)
 library(tidyverse)
 library(Seurat)
 library(anndataR)
@@ -29,11 +28,15 @@ library(bigstatsr)
 # devtools::load_all("../../anglemania")
 library(matrixStats)
 library(pbapply)
-source("scripts/utils/ggplot_utils.R")
+library(glue)
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
+today <- function() {
+  return(format(Sys.Date(), "%Y%m%d"))
+}
 ```
 
 
-# dropout no Metacells
+# dropout
 * sparsity was not calculated yet, so I'll add this as a column to the samplesheet
 ```{r}
 load_and_calc_sparsity <- function(file_path) {
@@ -41,47 +44,61 @@ load_and_calc_sparsity <- function(file_path) {
   counts <- adata$X
   total_elements <- nrow(counts) * ncol(counts)
   sparsity <- sum(counts == 0) / total_elements
-  return(round(sparsity, 4)*100)
+  return(round(sparsity, 4) * 100)
 }
+
 ```
 
 ## load metrics
 ```{r}
-metrics <- read.csv("/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/metrics/lower_batch_biovar_combined_metrics.tsv", sep = "\t", stringsAsFactors = FALSE)
+config <- yaml::read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_varying_batch_biovar_dropout_sample.yml")
+metrics <- read.csv(config$visualization$metrics_file, sep = "\t", stringsAsFactors = FALSE)
 head(metrics)
 colnames(metrics)
-samplesheet <- read.csv("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim/samplesheet_low_facLoc.tsv", sep = "\t", stringsAsFactors = FALSE)
+samplesheet <- read.csv(config$samplesheet, sep = "\t", stringsAsFactors = FALSE)
 
 if (!("sparsity" %in% colnames(samplesheet))) {
-  samplesheet$sparsity <- pblapply(samplesheet$file_path, load_and_calc_sparsity, cl = 40) %>% unlist()
+  samplesheet$sparsity <- pblapply(samplesheet$file_path, load_and_calc_sparsity, cl = 10) %>% unlist()
   samplesheet <- samplesheet %>% # for each dropout.mid level, calculate the mean sparsity because they are like 74 and 75 % for the same dropout, but I want to use it as a factor later
     mutate(sparsity = round(mean(sparsity)), .by = dropout.mid)
-  write.table(samplesheet, file = "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/with_dropout/own_sim/samplesheet_low_facLoc.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+  write.table(samplesheet, file = config$samplesheet, sep = "\t", row.names = FALSE, quote = FALSE)
 }
 
 metrics <- metrics %>%
   left_join(samplesheet %>% select(-original_h5ad), by = join_by(sample == sample_name)) %>%
-  mutate(
-    de.facLoc = factor(de.facLoc),
-    batch.facLoc = factor(batch.facLoc),
-    dropout.mid = factor(dropout.mid),
-    gene_selection = factor(gene_selection),
-    integration_method = factor(integration_method),
-    sparsity = factor(sparsity)
-  )
+    mutate(
+      de.facLoc = case_when(
+        de.facLoc == 0.05 ~ "mild",
+        de.facLoc == 0.1 ~ "moderate",
+        de.facLoc == 0.3 ~ "strong",
+      ),
+      de.facLoc = factor(de.facLoc, levels = c("mild", "moderate", "strong")),
+      batch.facLoc = case_when(
+        batch.facLoc == 0.05 ~ "mild",
+        batch.facLoc == 0.1 ~ "moderate",
+        batch.facLoc == 0.3 ~ "strong",
+      ),
+      batch.facLoc = factor(batch.facLoc, levels = c("mild", "moderate", "strong")),
+      dropout.mid = factor(dropout.mid),
+      gene_selection = factor(gene_selection),
+      integration_method = factor(integration_method),
+      sparsity = factor(sparsity)
+  ) 
 
-View(metrics)
+head(metrics)
 
 ```
 
 ```{r}
-outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_simulated_visualization_dropout/"
+outplot <- config$visualization$outplot_dir_bm_visualization
+if (!dir.exists(outplot)) {
+  dir.create(outplot, recursive = TRUE)
+}
 ```
 
 ## Plot
 ### Heatmap integration score as a function of biol. variab. and batch effects
 ```{r}
-View(metrics %>% filter(integration_method == "scvi", gene_selection == "angl"))
 for (m in unique(metrics$integration_method)) {
   for (d in unique(metrics$sparsity)) {
     for (g in unique(metrics$gene_selection)) {
@@ -104,7 +121,6 @@ for (m in unique(metrics$integration_method)) {
 #### Total Score
 * Here, I plot the sparsity 
 ```{r}
-
 dodge <- position_dodge(width = 0.7)
 for (m in unique(metrics$integration_method)) {
   for (de in unique(metrics$de.facLoc)) {
@@ -124,23 +140,23 @@ for (m in unique(metrics$integration_method)) {
         labs(
           x = "Sparsity [%]", 
           y = "Integration Score", 
-          title = paste0(m, "-de.facLoc", de, "-TotalScore")
+          title = glue("{m}\nTotalScore by sparsity\nbiol. variability: {de}")
           ) +
         ylim(0, 1) +
         # increase font size of all text
         theme(
-          text = element_text(size = 30, face = "bold"),
           aspect.ratio = 1,
           legend.position = c(0.8, 0.1)
-        )
+        ) + 
+        theme_big_text()
 
         print(p)
-        # ggsave(
-        #     file.path(outplot, paste0(m, "_ngroup", i, "_nbatch", j, "_TotalScore_violin.pdf")),
-        #     width = 10, 
-        #     height = 10,
-        #     plot = p
-        # )
+        ggsave(
+            glue("{outplot}/{today()}_{m}_TotalScore_violin.pdf"),
+            width = 8, 
+            height = 6,
+            plot = p
+        )
     
       
     }
@@ -166,12 +182,18 @@ for (m in unique(metrics$integration_method)) {
         labs(
           x = "Sparsity [%]",
           y = "Integration Score",
-          title = paste0(m, " - Total Score by \nsparsity and de.facLoc")
+          color = "Biological Variability",
+          title = glue("{m}\nTotal Score by \nsparsity and de.facLoc")
         ) +
         big_text_theme()
 
       print(p)
-    ggsave(file.path(outplot, paste0(m, "_TotalScore_by_sparsity_and_de.facLoc_ScatterPlot.pdf")), width = 10, height = 10, plot = p)
+      ggsave(
+        glue("{outplot}/{today()}_{m}_TotalScore_by_sparsity_and_de.facLoc_ScatterPlot.pdf"),
+        width = 10, 
+        height = 10,
+        plot = p
+      )
   }
 
 ```
@@ -193,12 +215,50 @@ for (m in unique(metrics$integration_method)) {
     labs(
       x = "Sparsity [%]",
       y = "Bio Conservation Score",
-      title = paste0(m, " - Bio Conservation Score by \nsparsity and de.facLoc")
+      color = "Biological Variability",
+      title = glue("{m}\nBio Conservation Score by \nsparsity and de.facLoc")
     ) +
     big_text_theme()
 
   print(p)
-  ggsave(file.path(outplot, paste0(m, "_BioConservationScore_by_sparsity_and_de.facLoc_ScatterPlot.pdf")), width = 10, height = 10, plot = p)
+  ggsave(
+    glue("{outplot}/{today()}_{m}_BioConservationScore_by_sparsity_and_de.facLoc_ScatterPlot.pdf"),
+    width = 10, 
+    height = 10,
+    plot = p
+  )
+}
+```
+
+#### Batch correction score
+```{r}
+for (m in unique(metrics$integration_method)) {
+  p <- metrics %>%
+    filter(
+      integration_method == m
+    ) %>%
+    group_by(de.facLoc, sparsity, integration_method, gene_selection) %>%
+    summarise(mean_total = mean(Batch.correction), .groups = "drop") %>%
+    ggplot(aes(x = sparsity, y = mean_total, color = de.facLoc)) +
+    geom_point(size = 6, alpha = 0.8, aes(shape = gene_selection)) +
+    ylim(0, 1) +
+    guides(color = guide_legend(ncol = 2)) +
+    scale_color_brewer(palette = "Dark2") +
+    labs(
+      x = "Sparsity [%]",
+      y = "Batch Correction Score",
+      color = "Biological Variability",
+      title = glue("{m}\nBatch Correction Score by \nsparsity and de.facLoc")
+    ) +
+    big_text_theme()
+
+  print(p)
+  ggsave(
+    glue("{outplot}/{today()}_{m}_BatchCorrectionScore_by_sparsity_and_de.facLoc_ScatterPlot.pdf"),
+    width = 10, 
+    height = 10,
+    plot = p
+  )
 }
 ```
 
@@ -553,3 +613,6 @@ for (m in unique(metrics$integration_method)) {
 
 ```
 
+```{r}
+sessionInfo()
+```

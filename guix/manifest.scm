@@ -36,6 +36,7 @@
                                 "r-matrix"               ;; >= 1.3.11
                                 "r-rmarkdown"
                                 "r-s4vectors"
+                                "r-seurat"
                                 "r-seuratobject"
                                 "r-singlecellexperiment"
                                 "r-summarizedexperiment"
@@ -48,6 +49,49 @@
        "anndataR provides an R interface to work with AnnData objects, allowing integration with single-cell analysis pipelines in R.")
       (license license:gpl3))))
 
+
+(define-public r-gtes
+  (let ((commit "c9efdb21f3c6087b3c285e41fbb068310cc7a3a0")  ;; Replace with the actual commit hash for the desired version
+        (revision "1"))
+    (package
+      (name "r-gtes")
+      (version (git-version "0.99.0" revision commit))  ;; Replace with the correct version
+      (source
+       (origin
+         (method git-fetch)
+         (uri (git-reference
+               (url "https://github.com/yzhou1999/GTEs")  ;; Repository URL
+               (commit commit)))
+         (file-name (git-file-name name version))
+         (sha256
+          (base32 "1a3ll9p43nvmcsz0r2jd9wbmrlr7b60v3c61dr0dgfi0cn13p6xr"))))  ;; Replace with the actual SHA256 checksum
+      (build-system r-build-system)
+      (native-inputs (map specification->package
+                          (list 
+                          "r-matrix"
+                          "r-matrixstats"
+                          "r-rcpp"
+                          "r-rcppeigen"
+                          "r-dplyr"
+                        )))
+      (home-page "https://yzhou1999.github.io/GTEs/")
+      (synopsis "GTE model quantifies batch effects for individual genes in single-cell data")
+      (description
+       "GTE model quantifies batch effects for individual genes in single-cell data.")
+      (license license:gpl3))))
+
+
+(define python-numpy-1.26
+  (package
+    (inherit (specification->package "python-numpy"))
+    (version "1.26.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (pypi-uri "numpy" version))
+       (sha256
+        (base32 "0410j6jfz1yzm5s0v0yrc1j0q6ih4322357and7arr0jxnlsn0ia"))))))
+
 (define-public python-plottable
   (package
     (name "python-plottable")
@@ -59,13 +103,15 @@
        (sha256
         (base32 "0784hkl5vgii0b623yfhjd1iwjx10g0hahppbgf2j8f864m7cp93"))))
     (build-system pyproject-build-system)
-    (propagated-inputs (map specification->package
-                              (list "python-setuptools"
-                                    "python-wheel"
-                                    "python-matplotlib"
-                                    "python-numpy"
-                                    "python-pandas"
-                                    "python-pillow")))
+    (arguments
+     `(#:tests? #f)) ; Disable the 'check' phase
+    (propagated-inputs
+                    (map specification->package
+                      (list "python-setuptools"
+                            "python-wheel"
+                            "python-matplotlib"
+                            "python-pandas"
+                            "python-pillow")))
     (native-inputs (map specification->package
                         (list "python-black"
                               "python-pytest")))
@@ -108,7 +154,9 @@
        (uri (pypi-uri "Tree" version))
        (sha256
         (base32 "10vqdxj2gpns1iciym86fx78c46i4dd94y6sa7snkpahpz4qwkgq"))))
-    (build-system pyproject-build-system)
+    (build-system python-build-system)
+    (arguments
+     `(#:tests? #f)) ; Disable the 'check' phase
     (propagated-inputs (cons* python-svgwrite
                         (map specification->package
                               (list "python-click"
@@ -124,13 +172,13 @@
 (define-public python-scib-metrics
   (package
     (name "python-scib-metrics")
-    (version "0.5.1")
+    (version "0.5.7")
     (source
      (origin
        (method url-fetch)
        (uri (pypi-uri "scib_metrics" version))
        (sha256
-        (base32 "0rp2l4rd44ghrvv7iyshg4fqh5skwmiz1yllp4119hgimi8h5lbl"))))
+        (base32 "16h4qgkc2hvgsm86i8ck0qj6xgj076gb2pxhvvdjp3bijbj5c9d4"))))
     (build-system pyproject-build-system)
     (arguments
      `(#:tests? #f  ; Disable the test phase
@@ -158,7 +206,6 @@
                                   "python-jax"
                                   "python-jaxlib"
                                   "python-matplotlib"
-                                  "python-numpy"
                                   "python-pandas"
                                   "python-pynndescent"
                                   "python-rich"
@@ -205,8 +252,7 @@
          (delete 'sanity-check)))) 
     (propagated-inputs
      (map specification->package
-          (list "python-numpy"
-                "python-pandas"
+          (list "python-pandas"
                 "python-seaborn"
                 "python-matplotlib"
                 "python-numba"
@@ -233,11 +279,11 @@
 
 
 (define-public r-anglemania
-  (let ((commit "8052de59deae277d8941493bd72e026f04c5d854")  ;; Replace with the actual commit hash for the desired version
+  (let ((commit "6d00f7fbae2490e489229fe6f993119bd7d214a5")  ;; Replace with the actual commit hash for the desired version
         (revision "1"))
     (package
       (name "r-anglemania")
-      (version (git-version "0.99.0" revision commit))  ;; Replace with the correct version
+      (version (git-version "0.99.4" revision commit))  ;; Replace with the correct version
       (source
        (origin
          (method git-fetch)
@@ -246,7 +292,7 @@
                (commit commit)))
          (file-name (git-file-name name version))
          (sha256
-          (base32 "1cg583wfacd259qjqizzs7l49f39z71kl5g9y553a708rsw8j61v"))))  ;; Replace with the actual SHA256 checksum
+          (base32 "15dm3zzz5ryakgy0l5b8m4ib3ahwvhsnv7lziz40qgha1n2sycgx"))))  ;; Replace with the actual SHA256 checksum
       (build-system r-build-system)
       ;; Disable tests here:
       (arguments
@@ -277,8 +323,56 @@
 
 
 
+(define-public python-balanced-clustering
+  (let ((commit "0c1d8702f8d62868310195620fa595eee24857b7")  ;; or pin to a specific commit from your fork
+        (revision "1"))
+    (package
+      (name "python-balanced-clustering")
+      (version (git-version "0.1.2" revision commit))
+      (source
+       (origin
+         (method git-fetch)
+         (uri (git-reference
+               (url "https://github.com/kollo97/balanced-clustering")
+               (commit commit)))
+         (file-name (git-file-name name version))
+         (sha256
+          (base32 "18b3zkdm6fx6akvwh14d58m35l2xx42xr4znd58nmlif8lynb1bp"))))
+      (build-system pyproject-build-system)
+      (arguments
+       `(#:tests? #f
+         #:phases
+         (modify-phases %standard-phases
+           ;; The module folder is still named balanced_clustering, but the
+           ;; package name is "imbalanced-clustering"
+           (add-before 'build 'symlink-correct-package
+             (lambda _
+               (symlink "balanced_clustering" "imbalanced_clustering")
+               #t)))))
+      (propagated-inputs
+       (map specification->package
+            (list "python-cython"
+                  "python-ipykernel"
+                  "jupyter"
+                  "python-jupyterlab"
+                  "python-scipy"
+                  "python-pandas"
+                  "python-scikit-learn"
+                  "python-seaborn")))
+      (native-inputs
+       (map specification->package
+            (list "python-poetry-core")))
+      (home-page "https://github.com/kollo97/balanced-clustering")
+      (synopsis "Clustering metrics for imbalanced datasets")
+      (description
+       "Balanced Clustering provides clustering metrics and tools that work well with imbalanced datasets.")
+      (license license:gpl3))))
+
+
+
 (define python-stuff
   (list "python"
+        "python-matplotlib"
         "python-scanpy"
         "python-loompy"
         "python-pynvim"
@@ -292,6 +386,9 @@
         "python-scvi-tools"
         "python-harmonypy"
         "python-ipykernel"
+        "python-toml"
+        "python-jupyterlab"
+        "python-ipywidgets"
         ))
 
 (define r-stuff
@@ -338,6 +435,14 @@
         "r-domc"
         "r-digest"
         "r-corrplot"
+        ; for GTE stuff
+        "r-batchelor"
+        "r-scran"
+        "r-bluster"
+        "r-scater"
+        "r-upsetr"
+        "r-ggvenndiagram"
+        "r-cellmixs"
         ))
 
 (define other-stuff
@@ -355,7 +460,9 @@
         python-tree
         python-scib-metrics
         python-scib
-        ; r-anglemania
+        r-anglemania
+        python-balanced-clustering
+        r-gtes
         (map specification->package
              (append python-stuff
                      r-stuff

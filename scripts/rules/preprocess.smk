@@ -11,8 +11,8 @@ rule preprocess:
     params:
         batch_key = config["batch_key"],
         anglemania_mode = config["anglemania_mode"],
-        zscore_mean_threshold = config["zscore_mean_threshold"],
-        zscore_snr_threshold = config["zscore_snr_threshold"]
+        n_genes = config["n_genes"],
+        permutation_function = config["permutation_function"]
     # log:
     #     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/snakemake_logs/preprocess/{sample}_{gene_selection}_log_test.txt"
     shell:
@@ -23,6 +23,6 @@ rule preprocess:
             --batch_key {params.batch_key} \
             --gene_selection {wildcards.gene_selection} \
             --anglemania_mode {params.anglemania_mode} \
-            --zscore_mean_threshold {params.zscore_mean_threshold} \
-            --zscore_snr_threshold {params.zscore_snr_threshold}
+            --n_genes {params.n_genes} \
+            --permutation_function {params.permutation_function}
         """

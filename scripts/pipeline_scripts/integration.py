@@ -19,7 +19,7 @@ from os.path import join
               help="File location of the original h5ad input file")
 @click.option("--feature_subset", 
               default=None, 
-              help="File location of the h5ad input file")
+              help="CSV file with the genes selected for integration. If None, all genes are used.")
 @click.option("--outfile", 
               default="/data/akalin/akollot/anglemania_benchmark/results/pbmcsca/integrated/test.h5ad", 
               help="File location of the output file where the integrated data/embeddings should be stored")
@@ -38,7 +38,7 @@ from os.path import join
 # MAIN FUNCTION
 #------------------------------------------------------------------------------#
 
-def integrate(infile, feature_subset = None, outfile, integration_method, batch_key, label_key=None):
+def integrate(infile, outfile, integration_method, batch_key, label_key=None, feature_subset = None):
     click.secho(f"Input file is: {infile}", fg="bright_yellow", err=True)
     click.secho("Reading input file...", fg="bright_yellow", err=True)
 
