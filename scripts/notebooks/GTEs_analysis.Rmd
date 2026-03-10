@@ -1,0 +1,77 @@
+---
+title: "GTEs analysis"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+---
+
+# introduction
+Chatty gave a pretty good idea on how to use the GTEs package to show how anglemania
+genes are less affected by batch effects than HVGs:
+- “HBG removal” ablation (smoking gun)
+    - Quantify per‑gene batch‑sensitivity, drop the worst offenders from the HVG set,
+    and watch integration improve.
+- Design: For each gene, compute a gene‑level batch score like the GTE/HBG-style
+score from Zhou et al. (2025). Rank genes by batch‑sensitivity; re‑run integration
+after removing the top 1–5% from the HBG list.
+
+- What you’ll see: kBET/LISI improve sharply once a handful of HBGs are excluded; in
+several datasets, removing only a few genes makes a disproportionate difference. 
+
+- Figure panel suggestion: line plot: “% HBGs removed” (x) vs “iLISI/kBET” (y) for 
+HVG‑based integration; a dotted horizontal line for anglemania’s performance to show convergence.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 10)
+knitr::opts_chunk$set(fig.width = 14)
+```
+
+
+# load libraries
+```{r, load libraries}
+library(tidyverse)
+library(pbapply)
+library(rhdf5)
+library(httpgd)
+library(GTEs)
+library(glue)
+library(anndataR)
+library(Seurat)
+```
+
+# Part I
+- Check number of HBGs in HVG list and anglemania genes
+- Sequential removal of more and more HBGs from the HVG list 
+- Visualization of how integration scores of HVG integration converge with
+anglemania integration when you remove HBGs.
+
+## load data
+- GTEs needs the counts matrix and the metadata 
+```{r}
+batch_facloc <- 0.3
+de_facloc <- 0.1
+sample_name <- glue("batch.facLoc{batch_facloc}_de.facLoc{de_facloc}_nbatch5_ngroup4_groupCells1000")
+sim_h5ad_path <- glue("/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/facScale0.1/{sample_name}.h5ad")
+se <- anndataR::read_h5ad(sim_h5ad_path, to = "Seurat")
+counts <- SeuratObject::LayerData(se, "counts")
+meta <- se[[]]
+anglemania_genes <- read.delim(glue("/data/akalin/akollot/anglemania_benchmark/simulated/facScale0.1/groupCells1000/preprocessed/{sample_name}_angl.tsv")) |> pull(hgnc_symbol)
+hvg <- read.delim(glue("/data/akalin/akollot/anglemania_benchmark/simulated/facScale0.1/groupCells1000/preprocessed/{sample_name}_hvg.tsv")) |> pull(hgnc_symbol)
+gene_list <- list(
+    anglemania = anglemania_genes,
+    hvg = hvg
+)
+```
+
+```{r}
+
+```
