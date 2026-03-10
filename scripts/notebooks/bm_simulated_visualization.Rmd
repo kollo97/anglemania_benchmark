@@ -58,7 +58,30 @@ metrics <- metrics %>%
     batch.facLoc = factor(batch.facLoc),
     gene_selection = factor(gene_selection),
     integration_method = factor(integration_method)
-  )
+  )  %>%
+    mutate(
+      de.facLoc = case_when(
+        de.facLoc == 0 ~ "none",
+        de.facLoc == 0.01 ~ "small",
+        de.facLoc == 0.05 ~ "mild",
+        de.facLoc == 0.1 ~ "moderate",
+        de.facLoc == 0.3 ~ "strong",
+        de.facLoc == 0.6 ~ "very strong",
+      ),
+      de.facLoc = factor(de.facLoc, levels = c("none", "small", "mild", "moderate", "strong", "very strong")),
+      batch.facLoc = case_when(
+        batch.facLoc == 0 ~ "none",
+        batch.facLoc == 0.01 ~ "small",
+        batch.facLoc == 0.05 ~ "mild",
+        batch.facLoc == 0.1 ~ "moderate",
+        batch.facLoc == 0.3 ~ "strong",
+        batch.facLoc == 0.6 ~ "very strong",
+      ),
+      batch.facLoc = factor(batch.facLoc, levels = c("none", "small", "mild", "moderate", "strong", "very strong")),
+      gene_selection = factor(gene_selection),
+      integration_method = factor(integration_method)
+    ) |>
+    as_tibble()
 
 head(metrics)
 ```
@@ -169,14 +192,14 @@ for (m in unique(metrics$integration_method)) {
         theme(
           text = element_text(size = 20, face = "bold"),
           aspect.ratio = 1,
-          legend.position = c(0.8, 0.1)
+          legend.position = c(0.8, 0.2)
         )
 
         print(p)
         ggsave(
             file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_TotalScore_violin.pdf")),
-            width = 5,
-            height = 5,
+            width = 7,
+            height = 7,
             plot = p
         )
     }
@@ -249,20 +272,21 @@ for (m in unique(metrics$integration_method)) {
         # make manual color
         scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey"))+
         theme_bw() +
-        labs(x = "Biological Variability", y = "Bio.conservation", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
+        labs(x = "Biological Variability", y = "BioConservation Score", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
         ylim(0, 1) +
         # increase font size of all text
         theme(
-          text = element_text(size = 30, face = "bold"),
+          text = element_text(size = 20, face = "bold"),
           aspect.ratio = 1,
-          legend.position = c(0.8, 0.1)
+          legend.position = c(0.8, 0.2)
         )
+
         print(p)
         ggsave(
-          file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_BioConservation_violin.pdf")),
-          width = 10,
-          height = 10,
-          plot = p
+            file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_BioConservation_violin.pdf")),
+            width = 7,
+            height = 7,
+            plot = p
         )
     }
   }
@@ -284,24 +308,48 @@ for (m in unique(metrics$integration_method)) {
         # make manual color
         scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey"))+
         theme_bw() +
-        labs(x = "Biological Variability", y = "Batch.correction", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
+        labs(x = "Biological Variability", y = "BatchCorrection score", title = paste0(m, "-ngroup", i, "-nbatch", j )) +
         ylim(0, 1) +
         # increase font size of all text
         theme(
-          text = element_text(size = 30, face = "bold"),
+          text = element_text(size = 20, face = "bold"),
           aspect.ratio = 1,
-          legend.position = c(0.8, 0.1)
+          legend.position = c(0.8, 0.2)
         )
       print(p)
       ggsave(
         file.path(outplot_bm, paste0(m, "_ngroup", i, "_nbatch", j, "_BatchCorrection_violin.pdf")),
-        width = 10,
-        height = 10,
+        width = 7,
+        height = 7,
         plot = p
       )
     }
   }
 }
+```
+
+## low DE total integration score across increasing batch effect
+```{r}
+lowde <- metrics |>
+    filter(de.facLoc == "moderate")
+
+# scatter plot
+lowde |>
+    ggplot(aes(x = batch.facLoc, y = Total, fill = gene_selection)) +
+    geom_boxplot() +
+    theme_minimal() +
+    facet_wrap(~integration_method)
+
+lowde |>
+    filter(nbatch == 5, ngroup == 2) |>
+    ggplot(aes(x = batch.facLoc, y = Total, color = integration_method, shape = gene_selection)) +
+    geom_point() +
+    theme_minimal()
+lowde |>
+    filter(nbatch == 2, ngroup == 5) |>
+    ggplot(aes(x = batch.facLoc, y = Total, color = integration_method, shape = gene_selection)) +
+    geom_point() +
+    theme_minimal()
 ```
 
 # session Info
