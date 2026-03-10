@@ -324,7 +324,7 @@
 
 
 (define-public python-balanced-clustering
-  (let ((commit "0c1d8702f8d62868310195620fa595eee24857b7")  ;; or pin to a specific commit from your fork
+  (let ((commit "90aee8c56bf5445ff113db6a17ecbd4ba905f99f")  ;; specific commit from my fork
         (revision "1"))
     (package
       (name "python-balanced-clustering")
@@ -337,28 +337,22 @@
                (commit commit)))
          (file-name (git-file-name name version))
          (sha256
-          (base32 "18b3zkdm6fx6akvwh14d58m35l2xx42xr4znd58nmlif8lynb1bp"))))
+          (base32 "09jrw67smda81nax3vhc668rqffj51xdhl5d5q7j8qh61vy2cl8p"))))
       (build-system pyproject-build-system)
       (arguments
-       `(#:tests? #f
-         #:phases
-         (modify-phases %standard-phases
-           ;; The module folder is still named balanced_clustering, but the
-           ;; package name is "imbalanced-clustering"
-           (add-before 'build 'symlink-correct-package
-             (lambda _
-               (symlink "balanced_clustering" "imbalanced_clustering")
-               #t)))))
+       (list
+        #:tests? #f))  
       (propagated-inputs
        (map specification->package
-            (list "python-cython"
-                  "python-ipykernel"
+            (list "python-ipykernel"
                   "jupyter"
                   "python-jupyterlab"
                   "python-scipy"
                   "python-pandas"
                   "python-scikit-learn"
-                  "python-seaborn")))
+                  "python-seaborn"
+                  "python-pytest"
+            )))
       (native-inputs
        (map specification->package
             (list "python-poetry-core")))
@@ -367,8 +361,6 @@
       (description
        "Balanced Clustering provides clustering metrics and tools that work well with imbalanced datasets.")
       (license license:gpl3))))
-
-
 
 (define python-stuff
   (list "python"

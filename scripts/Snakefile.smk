@@ -17,7 +17,7 @@ if file_ext == ".tsv":
     SAMPLESHEET = pd.read_csv(config["samplesheet"], sep = "\t")
 elif file_ext == ".json":
     SAMPLESHEET = pd.read_json(config["samplesheet"])
-elif file_ext == "csv":
+elif file_ext == ".csv":
     SAMPLESHEET = pd.read_csv(config["samplesheet"], sep = ",")
 else:
     raise ValueError("samplesheet must be csv, tsv or json") 
@@ -25,7 +25,6 @@ else:
     # validate(SAMPLESHEET, "samplesheet_schema.yaml") 
 # SAMPLESHEET = SAMPLESHEET[SAMPLESHEET.ngroup <= 4] # 2 or 4 cell types per batch
 # SAMPLESHEET = SAMPLESHEET[SAMPLESHEET.nbatch <= 5] # 2,3,4, or 5 batches
-# SAMPLESHEET = SAMPLESHEET.iloc[1:2,:]
 # SAMPLESHEET = SAMPLESHEET[SAMPLESHEET.sample_name.str.contains("sim2")]
 
 file_paths = SAMPLESHEET.set_index("sample_name")["file_path"].to_dict()
@@ -52,10 +51,10 @@ rule all:
                gene_selection=GENE_SELECTIONS),
 
         # metrics
-        expand(rules.metrics.output, 
-               sample=SAMPLES, 
-               integration_method=INTEGRATION_METHODS, 
-               gene_selection=GENE_SELECTIONS),
+        # expand(rules.metrics.output, 
+        #        sample=SAMPLES, 
+        #        integration_method=INTEGRATION_METHODS, 
+        #        gene_selection=GENE_SELECTIONS),
 
         # combine
         rules.combine.output

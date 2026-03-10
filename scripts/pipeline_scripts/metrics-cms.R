@@ -1,0 +1,124 @@
+library(optparse)
+
+#------------------------------------------------------------------------------#
+# COMMAND LINE ARGUMENTS
+#------------------------------------------------------------------------------#
+
+option_list <- list(
+    make_option(c("-i", "--integrated_h5ad"),
+                            default = NA,
+                            type = "character",
+                            help = "File location of the integrated h5ad file"),
+    make_option(c("-o", "--outfile"),
+                            default = NA,
+                            type = "character",
+                            help = "File location of the output file where the metrics"),
+    make_option(c("-s", "--sample"),
+                            default = NA,
+                            type = "character",
+                            help = "sample name"),
+    make_option(c("-m", "--integration_method"),
+                            default = NA,
+                            type = "character",
+                            help = "integration method. One of ['harmony','scvi','scanvi']"),
+    make_option(c("-g", "--gene_selection"),
+                            default = NA,
+                            type = "character",
+                            help = "gene selection method. One of ['hvg', 'angl', 'full', 'rand']"),
+    make_option(c("-b", "--batch_key"),
+                            default = "batch",
+                            type = "character",
+                            help = "batch key specifying a column in the metadata that divides the batches")
+)
+parser <- OptionParser(option_list = option_list)
+args <- parse_args(parser)
+
+suppressPackageStartupMessages({
+    library(anndataR)
+    library(SingleCellExperiment)
+    library(SummarizedExperiment)
+    library(CellMixS)
+    library(scater)
+    library(scuttle)
+    library(checkmate)
+})
+
+#------------------------------------------------------------------------------#
+# FUNCTION
+#------------------------------------------------------------------------------#
+#' Calculate CMS (Cell Mixing Score)
+#' 
+#' @description
+#' This function calculates the Cell Mixing Score (CMS) of an integrated dataset
+#' based on the CellMixS package. The CMS is a measure of cell mixing, which
+#' reflects how well individual cells represent their respective batches.
+#' 
+#' @param integrated_sce SingleCellExperiment object containing the integrated
+#' dataset
+#' @param batch_key Key for batch information in metadata SCE object
+#'
+#' @return The CMS score, which is a value between 0 and 1, where 1 indicates
+#' complete mixing and 0 indicates no mixing.
+calculate_cms <- function(
+    integrated_sce,
+    batch_key
+) {
+    set.seed(1)
+    message("Calculating CMS...")
+
+    k <- min(200, ncol(integrated_sce) - 1L)
+    integrated_sce <- CellMixS::cms(
+        integrated_sce,
+        k = k,
+        group = batch_key,
+        dim_red = "emb",
+        n_dim = ncol(SingleCellExperiment::reducedDim(integrated_sce, "emb"))
+    )
+
+    cms_scores <- SummarizedExperiment::colData(integrated_sce)$cms
+    if (any(is.na(cms_scores))) {
+        message("Ignoring ", sum(is.na(cms_scores)), " cells with NA CMS scores")
+    }
+
+    # Higher is better
+    message("Calculating final CMS score...")
+    score <- 1 - mean(cms_scores < 0.1, na.rm = TRUE)
+    message("Finished calculating final CMS score: ", score)
+    return(score)
+}
+
+#------------------------------------------------------------------------------#
+# MAIN
+#------------------------------------------------------------------------------#
+# TEMPORARY--------------
+# args <- list()
+# args$integrated_h5ad <- "/data/akalin/akollot/anglemania_benchmark/simulated/anglemania_ranking/facScale0.1/groupCells1000/integration/batch.facLoc0.3_de.facLoc0.3_nbatch2_ngroup2_groupCells1000/scanorama/batch.facLoc0.3_de.facLoc0.3_nbatch2_ngroup2_groupCells1000_hvg.h5ad"
+# args$batch_key <- "Batch"
+# args$sample <- "test"
+# args$gene_selection <- "test"
+# args$integration_method <- "test"
+# args$outfile <- sprintf("%s%s%s_%s_cms.tsv", args$sample, args$integration_method, args$sample, args$gene_selection)
+# ----------------------
+integrated_sce <- anndataR::read_h5ad(
+    args$integrated_h5ad,
+    to = "SingleCellExperiment"
+)
+
+cms <- calculate_cms(
+    integrated_sce = integrated_sce,
+    batch_key = args$batch_key
+)
+
+metrics <- data.frame(
+    cms = cms,
+    sample = args$sample,
+    integration_method = args$integration_method,
+    gene_selection = args$gene_selection
+)
+message("Writing metrics to ", args$outfile)
+write.table(
+    metrics,
+    file = args$outfile,
+    row.names = FALSE,
+    quote = FALSE
+)
