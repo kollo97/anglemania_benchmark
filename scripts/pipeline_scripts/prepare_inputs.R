@@ -67,8 +67,8 @@ if (!file.exists(args$infile)) {
 }
 
 
-if (!(args$gene_selection %in% c("hvg", "angl", "full", "rand"))) {
-    stop("Invalid gene selection method. Please provide one of ['hvg', 'angl', 'full', 'rand']")
+if (!(args$gene_selection %in% c("hvg", "angl", "full", "rand", "top_btvr", "bottom_btvr"))) {
+    stop("Invalid gene selection method. Please provide one of ['hvg', 'angl', 'full', 'rand', 'top_btvr', 'bottom_btvr']")
 }
 
 #------------------------------------------------------------------------------#
@@ -131,4 +131,29 @@ if (args$gene_selection == "hvg") {
     rand_genes <- sample(rownames(se), args$n_genes)
     rand_genes <- data.frame(hgnc_symbol = rand_genes, row.names = names(rand_genes))
     write.table(rand_genes, args$outfile, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+} else if (args$gene_selection %in% c("top_btvr", "bottom_btvr")) {
+
+    # Select genes by ground-truth BTVR (Between-to-Total Variance Ratio).
+    # Requires splatter-simulated h5ad files that store DEFacGroup* (biological
+    # variance factors) and BatchFacBatch* (technical variance factors) in var.
+    # Formula from compare_gene_selections.Rmd: log((BioVar+eps)/(TechVar+eps))
+    var_df     <- as.data.frame(ad$var)
+    bio_cols   <- grep("^DEFacGroup",    colnames(var_df), value = TRUE)
+    tech_cols  <- grep("^BatchFacBatch", colnames(var_df), value = TRUE)
+    if (length(bio_cols) == 0 || length(tech_cols) == 0) {
+        stop(paste0(
+            "top_btvr/bottom_btvr requires DEFacGroup* and BatchFacBatch* columns ",
+            "in var (splatter-simulated data only). Found: ",
+            paste(colnames(var_df), collapse = ", ")
+        ))
+    }
+    raw_BioVar  <- apply(var_df[, bio_cols,  drop = FALSE], 1, var)
+    raw_TechVar <- apply(var_df[, tech_cols, drop = FALSE], 1, var)
+    BTVR        <- scales::rescale(log((raw_BioVar + 1e-15) / (raw_TechVar + 1e-15)))
+    decreasing  <- (args$gene_selection == "top_btvr")
+    n_select    <- min(args$n_genes, nrow(var_df))
+    selected    <- rownames(var_df)[order(BTVR, decreasing = decreasing)][seq_len(n_select)]
+    out_df      <- data.frame(hgnc_symbol = selected, row.names = selected)
+    write.table(out_df, args$outfile, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 }

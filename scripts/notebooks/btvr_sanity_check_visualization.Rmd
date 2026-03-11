@@ -1,0 +1,456 @@
+---
+title: "BTVR Sanity Check: Does high BTVR → better integration?"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+---
+
+**Hypothesis**: Genes with high ground-truth BTVR (Between-to-Total Variance
+Ratio) — high biological signal, low batch noise — should produce better batch
+integration than genes with low BTVR. This notebook validates that hypothesis
+by comparing integration metrics for `top_btvr` vs `bottom_btvr` gene
+selections against the standard `hvg` and `angl` selections.
+
+**Pipeline**: Results produced by running Snakemake with
+`config_files/config_btvr_sanity_check.yml` on a subset of the facScale0.1
+simulations (nbatch=4, ngroup=4; 36 samples covering a 6×6 grid of
+batch.facLoc × de.facLoc combinations).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(fig.height = 10)
+knitr::opts_chunk$set(fig.width = 14)
+options(Seurat.object.assay.version = "v5")
+```
+
+# Setup
+
+```{r libraries}
+.libPaths(.Library)
+suppressPackageStartupMessages({
+    library(tidyverse)
+    library(scales)
+    library(rhdf5)
+    library(glue)
+    library(patchwork)
+    library(yaml)
+})
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
+```
+
+```{r paths}
+base_dir        <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark"
+cfg             <- read_yaml(file.path(base_dir, "scripts/config_files/config_btvr_sanity_check.yml"))
+samplesheet_src <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_facScale0.1.tsv"
+samplesheet_out <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_btvr_sanity_check.tsv"
+combined_metrics_path <- file.path(cfg$output_dir, cfg$out_metrics,
+                                   paste0(cfg$name, "_combined_metrics.tsv"))
+outplot <- file.path(base_dir, "output/plots/btvr_sanity_check/")
+if (!dir.exists(outplot)) dir.create(outplot, recursive = TRUE)
+```
+
+# Step 0: Create filtered samplesheet (if not yet done)
+
+This chunk creates the filtered samplesheet needed to run the Snakemake
+pipeline. Run this **before** launching Snakemake.
+
+```{r create_samplesheet}
+if (!file.exists(samplesheet_out)) {
+    message("Creating filtered samplesheet: nbatch=4, ngroup=4 ...")
+    ss <- read.delim(samplesheet_src)
+    sub <- ss[ss$nbatch == 4 & ss$ngroup == 4, ]
+    message(nrow(sub), " samples selected")
+    write.table(sub, samplesheet_out, sep = "\t", row.names = FALSE, quote = FALSE)
+    message("Written to: ", samplesheet_out)
+} else {
+    message("Samplesheet already exists: ", samplesheet_out)
+}
+samplesheet <- read.delim(samplesheet_out)
+message(nrow(samplesheet), " samples in samplesheet")
+head(samplesheet)
+```
+
+After running this chunk, launch the pipeline from `scripts/`:
+
+```bash
+cd scripts/
+snakemake -s Snakefile.smk --configfile config_files/config_btvr_sanity_check.yml -n
+snakemake -s Snakefile.smk --configfile config_files/config_btvr_sanity_check.yml --cores 8
+```
+
+---
+
+# Part 1: BTVR property of selected gene sets
+
+Before looking at integration results, we verify that the gene sets actually
+differ in their BTVR distributions as expected. We load one representative
+h5ad, compute BTVR from the ground-truth splatter columns, and compare the
+distributions of the four gene sets.
+
+```{r btvr_functions}
+get_BTVR <- function(var_df) {
+    bio_cols  <- select(var_df, starts_with("DEFacGroup"))
+    tech_cols <- select(var_df, starts_with("BatchFacBatch"))
+    raw_BioVar  <- apply(bio_cols,  1, var)
+    raw_TechVar <- apply(tech_cols, 1, var)
+    # rescaled log-ratio (from compare_gene_selections.Rmd)
+    BTVR <- rescale(log((raw_BioVar + 1e-15) / (raw_TechVar + 1e-15)))
+    tibble(
+        gene        = rownames(var_df),
+        BTVR        = BTVR,
+        raw_BioVar  = raw_BioVar,
+        raw_TechVar = raw_TechVar
+    )
+}
+
+get_var_from_h5ad <- function(h5ad_path) {
+    df <- h5read(h5ad_path, "/var") |> as.data.frame() |> column_to_rownames("_index")
+    h5closeAll()
+    df
+}
+```
+
+```{r pick_example_sample}
+# Use a sample with moderate batch and bio effects as the example
+samplesheet <- read.delim(samplesheet_out)
+example_row <- samplesheet |>
+    filter(batch.facLoc == 0.3, de.facLoc == 0.3) |>
+    slice(1)
+
+if (nrow(example_row) == 0) {
+    example_row <- samplesheet |> slice(1)
+    message("Fallback: using first row of samplesheet")
+}
+
+example_h5ad    <- example_row$file_path
+example_sample  <- example_row$sample_name
+message("Example sample: ", example_sample)
+message("h5ad path: ", example_h5ad)
+```
+
+```{r compute_btvr_example}
+var_df   <- get_var_from_h5ad(example_h5ad)
+btvr_all <- get_BTVR(var_df)
+
+# Retrieve the gene lists produced by the pipeline for this sample
+preprocessed_dir <- file.path(cfg$output_dir, cfg$out_preprocessed)
+gene_lists <- list()
+for (gs in cfg$gene_selection) {
+    tsv_path <- file.path(preprocessed_dir, glue("{example_sample}_{gs}.tsv"))
+    if (file.exists(tsv_path)) {
+        gene_lists[[gs]] <- read.delim(tsv_path)$hgnc_symbol
+    } else {
+        message("Gene list not found (pipeline not yet run?): ", tsv_path)
+        gene_lists[[gs]] <- character(0)
+    }
+}
+```
+
+```{r btvr_violin, fig.height=6}
+btvr_labeled <- map_dfr(names(gene_lists), function(gs) {
+    btvr_all |>
+        filter(gene %in% gene_lists[[gs]]) |>
+        mutate(gene_selection = gs)
+}) |>
+    mutate(gene_selection = factor(gene_selection,
+           levels = c("top_btvr", "bottom_btvr", "hvg", "angl")))
+
+gs_labels <- c(
+    top_btvr    = "Top 2000 BTVR",
+    bottom_btvr = "Bottom 2000 BTVR",
+    hvg         = "HVG",
+    angl        = "anglemania"
+)
+gs_colors <- c(
+    top_btvr    = "#2196F3",
+    bottom_btvr = "#F44336",
+    hvg         = "#FF9800",
+    angl        = "#64487A"
+)
+
+p_violin <- ggplot(btvr_labeled, aes(gene_selection, BTVR, fill = gene_selection)) +
+    geom_violin(trim = FALSE, alpha = 0.8) +
+    geom_boxplot(width = 0.12, fill = "white", outlier.size = 0.3) +
+    scale_fill_manual(values = gs_colors, labels = gs_labels) +
+    scale_x_discrete(labels = gs_labels) +
+    scale_y_continuous(limits = c(0, 1)) +
+    labs(
+        title = glue("BTVR distribution of selected genes\n({example_sample})"),
+        x     = "Gene selection method",
+        y     = "BTVR (rescaled, higher = more biological signal)",
+        fill  = NULL
+    ) +
+    theme_big_text() +
+    theme(legend.position = "none")
+
+p_violin
+ggsave(file.path(outplot, glue("{today()}_btvr_violin_{example_sample}.pdf")),
+       p_violin, width = 8, height = 5)
+```
+
+```{r btvr_density, fig.height=5}
+p_density <- ggplot(btvr_labeled, aes(BTVR, color = gene_selection, fill = gene_selection)) +
+    geom_density(alpha = 0.15, linewidth = 0.8) +
+    scale_color_manual(values = gs_colors, labels = gs_labels) +
+    scale_fill_manual(values  = gs_colors, labels = gs_labels) +
+    labs(
+        title = "BTVR density per gene selection",
+        x     = "BTVR (rescaled)",
+        y     = "Density",
+        color = NULL, fill = NULL
+    ) +
+    theme_big_text()
+
+p_density
+ggsave(file.path(outplot, glue("{today()}_btvr_density_{example_sample}.pdf")),
+       p_density, width = 8, height = 4)
+```
+
+---
+
+# Part 2: Integration metrics
+
+```{r check_metrics_file}
+if (!file.exists(combined_metrics_path)) {
+    stop(
+        "Combined metrics file not found:\n  ", combined_metrics_path,
+        "\n\nRun the Snakemake pipeline first:\n",
+        "  cd scripts/\n",
+        "  snakemake -s Snakefile.smk --configfile config_files/config_btvr_sanity_check.yml --cores 8"
+    )
+}
+message("Loading metrics from: ", combined_metrics_path)
+```
+
+```{r load_metrics}
+metrics_raw <- read.delim(combined_metrics_path)
+
+metrics <- metrics_raw |>
+    left_join(
+        samplesheet |> select(sample_name, batch.facLoc, de.facLoc, nbatch, ngroup),
+        by = join_by(sample == sample_name)
+    ) |>
+    mutate(
+        gene_selection     = factor(gene_selection,
+            levels = c("top_btvr", "bottom_btvr", "hvg", "angl")),
+        integration_method = factor(integration_method,
+            levels = c("scvi", "scanorama")),
+        de.facLoc    = factor(de.facLoc),
+        batch.facLoc = factor(batch.facLoc)
+    )
+
+message(nrow(metrics), " rows loaded")
+head(metrics)
+```
+
+## 2.1 Overall summary: boxplot across all conditions
+
+The key sanity check: `top_btvr` should score highest, `bottom_btvr` lowest.
+`angl` and `hvg` should fall somewhere in between (ideally `angl` ≥ `hvg`).
+
+```{r boxplot_overall, fig.height=6}
+p_box <- metrics |>
+    ggplot(aes(gene_selection, Total, fill = gene_selection)) +
+    geom_boxplot(outlier.size = 0.5, alpha = 0.8) +
+    stat_summary(fun = mean, geom = "point", shape = 4, size = 3, color = "black") +
+    scale_fill_manual(values = gs_colors, labels = gs_labels) +
+    scale_x_discrete(labels = gs_labels) +
+    scale_y_continuous(limits = c(0, 1)) +
+    facet_wrap(~integration_method) +
+    labs(
+        title = "Integration Total score by gene selection (all conditions)",
+        x     = NULL,
+        y     = "Total score (higher = better)",
+        fill  = NULL
+    ) +
+    theme_big_text() +
+    theme(
+        legend.position  = "none",
+        axis.text.x      = element_text(angle = 25, hjust = 1)
+    )
+
+p_box
+ggsave(file.path(outplot, glue("{today()}_total_score_boxplot.pdf")),
+       p_box, width = 10, height = 6)
+```
+
+```{r boxplot_bio_batch, fig.height=8}
+metrics_long <- metrics |>
+    select(gene_selection, integration_method, `Bio conservation`, `Batch correction`, Total) |>
+    pivot_longer(c(`Bio conservation`, `Batch correction`, Total),
+                 names_to = "metric_type", values_to = "score") |>
+    mutate(metric_type = factor(metric_type,
+           levels = c("Bio conservation", "Batch correction", "Total")))
+
+p_box2 <- ggplot(metrics_long, aes(gene_selection, score, fill = gene_selection)) +
+    geom_boxplot(outlier.size = 0.4, alpha = 0.8) +
+    stat_summary(fun = mean, geom = "point", shape = 4, size = 2) +
+    scale_fill_manual(values = gs_colors, labels = gs_labels) +
+    scale_x_discrete(labels = gs_labels) +
+    scale_y_continuous(limits = c(0, 1)) +
+    facet_grid(metric_type ~ integration_method) +
+    labs(
+        title = "Integration scores by gene selection",
+        x = NULL, y = "Score", fill = NULL
+    ) +
+    theme_big_text() +
+    theme(
+        legend.position = "none",
+        axis.text.x     = element_text(angle = 25, hjust = 1)
+    )
+
+p_box2
+ggsave(file.path(outplot, glue("{today()}_scores_by_type_boxplot.pdf")),
+       p_box2, width = 12, height = 9)
+```
+
+## 2.2 Heatmaps: Total score as function of batch × bio effects
+
+Using the same heatmap style as `bm_simulated_visualization.Rmd`.
+
+```{r heatmap_total, fig.height=8}
+heatmap_labels <- c(
+    top_btvr    = "Top BTVR",
+    bottom_btvr = "Bottom BTVR",
+    hvg         = "HVG",
+    angl        = "anglemania"
+)
+
+for (m in levels(metrics$integration_method)) {
+    p <- metrics |>
+        filter(integration_method == m) |>
+        draw_heatmap2(
+            df     = _,
+            score  = "Total",
+            fill   = "mean",
+            labels = heatmap_labels,
+            scale_fill_limits = c(0, 1)
+        ) +
+        labs(title = glue("{m} — mean Total score by batch × bio effect"))
+    print(p)
+    ggsave(
+        file.path(outplot, glue("{today()}_heatmap_total_{m}.pdf")),
+        p, width = 16, height = 6
+    )
+}
+```
+
+```{r heatmap_bio, fig.height=8}
+for (m in levels(metrics$integration_method)) {
+    p <- metrics |>
+        filter(integration_method == m) |>
+        draw_heatmap2(
+            df     = _,
+            score  = "Bio conservation",
+            fill   = "mean",
+            labels = heatmap_labels,
+            scale_fill_limits = c(0, 1)
+        ) +
+        labs(title = glue("{m} — mean Bio conservation by batch × bio effect"))
+    print(p)
+    ggsave(
+        file.path(outplot, glue("{today()}_heatmap_biocons_{m}.pdf")),
+        p, width = 16, height = 6
+    )
+}
+```
+
+```{r heatmap_batch, fig.height=8}
+for (m in levels(metrics$integration_method)) {
+    p <- metrics |>
+        filter(integration_method == m) |>
+        draw_heatmap2(
+            df     = _,
+            score  = "Batch correction",
+            fill   = "mean",
+            labels = heatmap_labels,
+            scale_fill_limits = c(0, 1)
+        ) +
+        labs(title = glue("{m} — mean Batch correction by batch × bio effect"))
+    print(p)
+    ggsave(
+        file.path(outplot, glue("{today()}_heatmap_batchcorr_{m}.pdf")),
+        p, width = 16, height = 6
+    )
+}
+```
+
+## 2.3 Top BTVR vs Bottom BTVR: direct comparison
+
+The core sanity check — how much does top_btvr beat bottom_btvr?
+
+```{r delta_btvr, fig.height=6}
+delta_df <- metrics |>
+    filter(gene_selection %in% c("top_btvr", "bottom_btvr")) |>
+    select(sample, integration_method, gene_selection, Total,
+           `Bio conservation`, `Batch correction`,
+           batch.facLoc, de.facLoc) |>
+    pivot_longer(c(Total, `Bio conservation`, `Batch correction`),
+                 names_to = "metric", values_to = "score") |>
+    pivot_wider(names_from = gene_selection, values_from = score) |>
+    mutate(delta = top_btvr - bottom_btvr)
+
+p_delta <- ggplot(delta_df, aes(metric, delta, fill = metric)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_boxplot(outlier.size = 0.4, alpha = 0.8) +
+    stat_summary(fun = mean, geom = "point", shape = 4, size = 3) +
+    facet_wrap(~integration_method) +
+    labs(
+        title = "Score difference: Top BTVR minus Bottom BTVR",
+        subtitle = "Positive values confirm the hypothesis",
+        x = NULL, y = "Δ score (top − bottom BTVR)",
+        fill = NULL
+    ) +
+    theme_big_text() +
+    theme(legend.position = "none")
+
+p_delta
+ggsave(file.path(outplot, glue("{today()}_delta_top_vs_bottom_btvr.pdf")),
+       p_delta, width = 10, height = 6)
+```
+
+## 2.4 Where does anglemania fall relative to BTVR bounds?
+
+```{r rank_comparison, fig.height=6}
+rank_df <- metrics |>
+    select(sample, integration_method, gene_selection, Total) |>
+    mutate(gene_selection = factor(gene_selection,
+           levels = c("top_btvr", "angl", "hvg", "bottom_btvr"))) |>
+    group_by(sample, integration_method) |>
+    mutate(rank = rank(-Total, ties.method = "average")) |>
+    ungroup()
+
+p_rank <- ggplot(rank_df, aes(gene_selection, rank, fill = gene_selection)) +
+    geom_boxplot(outlier.size = 0.4, alpha = 0.8) +
+    stat_summary(fun = mean, geom = "point", shape = 4, size = 3) +
+    scale_fill_manual(values = gs_colors) +
+    scale_x_discrete(labels = heatmap_labels) +
+    scale_y_reverse(breaks = 1:4) +
+    facet_wrap(~integration_method) +
+    labs(
+        title = "Rank of Total score per sample (1 = best)",
+        x = NULL, y = "Rank (lower = better)", fill = NULL
+    ) +
+    theme_big_text() +
+    theme(
+        legend.position = "none",
+        axis.text.x     = element_text(angle = 20, hjust = 1)
+    )
+
+p_rank
+ggsave(file.path(outplot, glue("{today()}_rank_comparison.pdf")),
+       p_rank, width = 10, height = 6)
+```
+
+# Session info
+
+```{r session_info}
+sessionInfo()
+```
