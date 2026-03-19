@@ -7,6 +7,7 @@ output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/with_dropout/ow
 out_preprocessed: "preprocessed/"
 out_integration: "integration/"
 out_metrics: "metrics/"
+out_embedding: "embedding/"
 
 batch_key: "Batch"
 label_key: "Group"

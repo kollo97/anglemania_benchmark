@@ -7,6 +7,7 @@ output_dir: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_
 out_preprocessed: "preprocessed/"
 out_integration: "integration/"
 out_metrics: "metrics/"
+out_embedding: "embedding/"
 
 batch_key: "batch"
 label_key: "celltype"
