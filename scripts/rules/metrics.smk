@@ -1,7 +1,7 @@
 rule scib_metrics:
     input:
         original_h5ad=lambda wildcards: file_paths[wildcards.sample],
-        integrated_h5ad = rules.integrate.output
+        embedding_tsv = rules.integrate.output.embedding
     output:
         metrics = join(out_metrics, "{sample}/{integration_method}/{sample}_{gene_selection}_scibmetrics.tsv")
     params:
@@ -15,7 +15,7 @@ rule scib_metrics:
         """
         python3 pipeline_scripts/metrics-scib_metrics.py \
             --original_h5ad={input.original_h5ad} \
-            --integrated_h5ad={input.integrated_h5ad} \
+            --embedding_tsv={input.embedding_tsv} \
             --outfile={output.metrics} \
             --sample={wildcards.sample} \
             --gene_selection={wildcards.gene_selection} \
@@ -26,7 +26,8 @@ rule scib_metrics:
 
 rule bnmi:
     input:
-        integrated_h5ad = rules.integrate.output
+        original_h5ad=lambda wildcards: file_paths[wildcards.sample],
+        embedding_tsv = rules.integrate.output.embedding
     output:
         bnmi = join(out_metrics, "{sample}/{integration_method}/{sample}_{gene_selection}_bnmi.tsv")
     params:
@@ -35,7 +36,8 @@ rule bnmi:
     shell:
         """
         python3 pipeline_scripts/metrics-bNMI.py \
-            --integrated_h5ad={input.integrated_h5ad} \
+            --original_h5ad={input.original_h5ad} \
+            --embedding_tsv={input.embedding_tsv} \
             --outfile={output.bnmi} \
             --sample={wildcards.sample} \
             --gene_selection={wildcards.gene_selection} \
@@ -45,7 +47,8 @@ rule bnmi:
 
 rule cms:
     input:
-        integrated_h5ad = rules.integrate.output
+        original_h5ad=lambda wildcards: file_paths[wildcards.sample],
+        embedding_tsv = rules.integrate.output.embedding
     output:
         cms = join(out_metrics, "{sample}/{integration_method}/{sample}_{gene_selection}_cms.tsv")
     params:
@@ -54,7 +57,8 @@ rule cms:
     shell:
         """
         Rscript pipeline_scripts/metrics-cms.R \
-            --integrated_h5ad {input.integrated_h5ad} \
+            --original_h5ad {input.original_h5ad} \
+            --embedding_tsv {input.embedding_tsv} \
             --batch_key {params.batch_key} \
             --outfile {output.cms} \
             --sample {wildcards.sample} \
@@ -65,7 +69,7 @@ rule cms:
 rule ldfdiff:
     input:
         original_h5ad=lambda wildcards: file_paths[wildcards.sample],
-        integrated_h5ad = rules.integrate.output
+        embedding_tsv = rules.integrate.output.embedding
     output:
         ldfdiff = join(out_metrics, "{sample}/{integration_method}/{sample}_{gene_selection}_ldfDiff.tsv")
     params:
@@ -76,7 +80,7 @@ rule ldfdiff:
         """
         Rscript pipeline_scripts/metrics-ldfDiff.R \
             --original_h5ad {input.original_h5ad} \
-            --integrated_h5ad {input.integrated_h5ad} \
+            --embedding_tsv {input.embedding_tsv} \
             --batch_key {params.batch_key} \
             --label_key {params.label_key} \
             --outfile {output.ldfdiff} \

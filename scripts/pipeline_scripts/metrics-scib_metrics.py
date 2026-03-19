@@ -17,9 +17,9 @@ from scib.metrics import cluster_optimal_resolution
 @click.option("--original_h5ad",
               default="/data/akalin/akollot/anglemania_benchmark/data/pbmcsca/adata_hvg.h5ad",
               help="File location of the original h5ad input file")
-@click.option("--integrated_h5ad",
-              default="/data/akalin/akollot/anglemania_benchmark/results/pbmcsca/hvg/harmony.h5ad", 
-              help="File location of the integrated h5ad file")
+@click.option("--embedding_tsv",
+              default=None,
+              help="File location of the embedding TSV file (cell barcodes as row index)")
 @click.option("--outfile",
               default="/data/akalin/akollot/anglemania_benchmark/results/pbmcsca/hvg/",
               help="File location of the output file where the metrics")
@@ -33,7 +33,7 @@ from scib.metrics import cluster_optimal_resolution
 @click.option("--gene_selection",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
-              type=click.Choice(['hvg', 'angl', 'full', 'rand']))
+              type=click.Choice(['hvg', 'angl', 'full', 'rand', 'topbtvr', 'bottombtvr']))
 @click.option("--batch_key",
               default="batch",
               help="Batch key specifying a column in the metadata that divides the batches")
@@ -45,8 +45,8 @@ from scib.metrics import cluster_optimal_resolution
 # MAIN FUNCTION
 #------------------------------------------------------------------------------#
 
-def calc_metrics(original_h5ad, 
-                 integrated_h5ad, 
+def calc_metrics(original_h5ad,
+                 embedding_tsv,
                  outfile,
                  sample,
                  gene_selection,
@@ -58,24 +58,22 @@ def calc_metrics(original_h5ad,
         # stop and throw message
         raise FileExistsError(f"{outfile} already exists. Please delete it and try again.")
         
-    click.secho(f"Input files are: {original_h5ad}, {integrated_h5ad}", fg='bright_yellow', err=True)
+    click.secho(f"Input files are: {original_h5ad}, {embedding_tsv}", fg='bright_yellow', err=True)
 
     adata = sc.read_h5ad(original_h5ad)
     adata.layers["counts"] = adata.X.copy()
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     adata.layers["logcounts"] = adata.X.copy()
-    
-    adata_integrated = sc.read_h5ad(integrated_h5ad) # is already log normalized => located in .X 
-    
+
+    emb_df = pd.read_csv(embedding_tsv, sep="\t", index_col=0)
+    adata_integrated = adata[emb_df.index, :].copy()
+    adata_integrated.obsm["X_emb"] = emb_df.values
+
     if integration_method == 'seurat':
-        adata_integrated.layers["raw_counts"] = adata.X
         # make category type, so that the metrics can be calculated
         adata_integrated.obs[batch_key] = adata_integrated.obs[batch_key].astype("category")
         adata_integrated.obs[label_key] = adata_integrated.obs[label_key].astype("category")
-        sc.tl.pca(adata_integrated, layer="data") # anndataR::write_h5ad() writes the default assay of the seurat object (which was "integrated") to the "data" layer. This is the log-normalized data.
-        
-        adata_integrated.obsm["X_emb"] = adata_integrated.obsm['X_pca']
     
     bm = Benchmarker(
         adata_integrated,

@@ -5,10 +5,14 @@ library(optparse)
 #------------------------------------------------------------------------------#
 
 option_list <- list(
-    make_option(c("-i", "--integrated_h5ad"),
+    make_option(c("-a", "--original_h5ad"),
                             default = NA,
                             type = "character",
-                            help = "File location of the integrated h5ad file"),
+                            help = "File location of the original h5ad input file"),
+    make_option(c("-e", "--embedding_tsv"),
+                            default = NA,
+                            type = "character",
+                            help = "File location of the embedding TSV file (cell barcodes as row index)"),
     make_option(c("-o", "--outfile"),
                             default = NA,
                             type = "character",
@@ -24,7 +28,7 @@ option_list <- list(
     make_option(c("-g", "--gene_selection"),
                             default = NA,
                             type = "character",
-                            help = "gene selection method. One of ['hvg', 'angl', 'full', 'rand']"),
+                            help = "gene selection method. One of ['hvg', 'angl', 'full', 'rand', 'topbtvr', 'bottombtvr']"),
     make_option(c("-b", "--batch_key"),
                             default = "batch",
                             type = "character",
@@ -92,17 +96,23 @@ calculate_cms <- function(
 #------------------------------------------------------------------------------#
 # TEMPORARY--------------
 # args <- list()
-# args$integrated_h5ad <- "/data/akalin/akollot/anglemania_benchmark/simulated/anglemania_ranking/facScale0.1/groupCells1000/integration/batch.facLoc0.3_de.facLoc0.3_nbatch2_ngroup2_groupCells1000/scanorama/batch.facLoc0.3_de.facLoc0.3_nbatch2_ngroup2_groupCells1000_hvg.h5ad"
+# args$original_h5ad <- "/path/to/original.h5ad"
+# args$embedding_tsv <- "/path/to/embedding.tsv"
 # args$batch_key <- "Batch"
 # args$sample <- "test"
 # args$gene_selection <- "test"
 # args$integration_method <- "test"
 # args$outfile <- sprintf("%s%s%s_%s_cms.tsv", args$sample, args$integration_method, args$sample, args$gene_selection)
 # ----------------------
-integrated_sce <- anndataR::read_h5ad(
-    args$integrated_h5ad,
+original_sce <- anndataR::read_h5ad(
+    args$original_h5ad,
     to = "SingleCellExperiment"
 )
+emb_df <- read.table(args$embedding_tsv, sep = "\t", header = TRUE, row.names = 1)
+integrated_sce <- original_sce[, rownames(emb_df)]
+SingleCellExperiment::reducedDim(integrated_sce, "emb") <- as.matrix(emb_df)
+# CellMixS requires the batch column to be a factor; anndataR reads it as character
+integrated_sce[[args$batch_key]] <- factor(integrated_sce[[args$batch_key]])
 
 cms <- calculate_cms(
     integrated_sce = integrated_sce,

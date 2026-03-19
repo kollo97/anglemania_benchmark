@@ -8,6 +8,7 @@ from snakemake.utils import validate
 out_preprocessed = join(config["output_dir"], config["out_preprocessed"])
 out_integration = join(config["output_dir"], config["out_integration"])
 out_metrics = join(config["output_dir"], config["out_metrics"])
+out_embedding = join(config["output_dir"], config["out_embedding"])
 
 
 ############## INPUT #################
@@ -26,7 +27,7 @@ else:
 # SAMPLESHEET = SAMPLESHEET[SAMPLESHEET.ngroup <= 4] # 2 or 4 cell types per batch
 # SAMPLESHEET = SAMPLESHEET[SAMPLESHEET.nbatch <= 5] # 2,3,4, or 5 batches
 # SAMPLESHEET = SAMPLESHEET[SAMPLESHEET.sample_name.str.contains("sim2")]
-
+# SAMPLESHEET = SAMPLESHEET.iloc[0:2,:]
 file_paths = SAMPLESHEET.set_index("sample_name")["file_path"].to_dict()
 
 SAMPLES = file_paths.keys()
@@ -45,7 +46,7 @@ rule all:
                gene_selection=GENE_SELECTIONS),
 
         # integrate
-        expand(rules.integrate.output.integrated, 
+        expand(rules.integrate.output.embedding,
                sample=SAMPLES, 
                integration_method=INTEGRATION_METHODS, 
                gene_selection=GENE_SELECTIONS),

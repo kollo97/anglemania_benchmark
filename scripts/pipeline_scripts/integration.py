@@ -65,8 +65,6 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
                     # integrated = join(out_integration, "{sample}/{sample}_{integration_method}.h5ad")
         click.secho("Integrating using Harmony...", fg="bright_yellow", err=True)
         adata.obsm["X_emb"] = harmony.harmonize(adata.obsm["X_pca"], adata.obs, batch_key=batch_key)
-        click.secho(f"Saving Harmony integrated data to {outfile}", fg="bright_yellow", err=True)
-        adata.write(outfile)
 
     elif integration_method == "scvi":
         click.secho("Setting up SCVI model...", fg="bright_yellow", err=True)
@@ -80,9 +78,6 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
         model = scvi.model.SCVI(adata)
         model.train()
         adata.obsm["X_emb"] = model.get_latent_representation()
-        
-        click.secho(f"Saving SCVI integrated data to {outfile}", fg="bright_yellow", err=True)
-        adata.write_h5ad(outfile)
     
     elif integration_method == "scanvi":
         click.secho("Setting up SCVI model...", fg="bright_yellow", err=True)
@@ -101,9 +96,6 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
         click.secho("Training SCANVI model...", fg="bright_yellow", err=True)
         model.train(max_epochs=max_epochs_scanvi)
         adata.obsm["X_emb"] = model.get_latent_representation()
-        
-        click.secho(f"Saving SCANVI integrated data to {outfile}", fg="bright_yellow", err=True)
-        adata.write_h5ad(outfile)
     elif integration_method == "scanorama":
         click.secho("Setting up SCANORAMA model...", fg="bright_yellow", err=True)
         if "X_pca" not in adata.obsm:
@@ -115,8 +107,14 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
             adjusted_basis="X_emb",
             batch_size=10000
         )
-        adata.write_h5ad(outfile)
-        
+
+    emb_df = pd.DataFrame(
+        adata.obsm["X_emb"],
+        index=adata.obs_names,
+        columns=[f"emb_{i+1}" for i in range(adata.obsm["X_emb"].shape[1])]
+    )
+    click.secho(f"Saving embedding to {outfile}", fg="bright_yellow", err=True)
+    emb_df.to_csv(outfile, sep="\t")
 
     click.secho("Integration process completed successfully.", fg="bright_yellow", err=True)
 

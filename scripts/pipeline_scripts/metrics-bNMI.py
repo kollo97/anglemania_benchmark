@@ -12,9 +12,12 @@ from os.path import join
 # COMMAND LINE ARGUMENTS
 #------------------------------------------------------------------------------#
 @click.command()
-@click.option("--integrated_h5ad",
-              default="/data/akalin/akollot/anglemania_benchmark/results/pbmcsca/hvg/harmony.h5ad", 
-              help="File location of the integrated h5ad file")
+@click.option("--original_h5ad",
+              default=None,
+              help="File location of the original h5ad input file")
+@click.option("--embedding_tsv",
+              default=None,
+              help="File location of the embedding TSV file (cell barcodes as row index)")
 @click.option("--outfile",
               default="/data/akalin/akollot/anglemania_benchmark/results/pbmcsca/hvg/",
               help="File location of the output file where the metrics")
@@ -28,13 +31,14 @@ from os.path import join
 @click.option("--gene_selection",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
-              type=click.Choice(['hvg', 'angl', 'full', 'rand']))
+              type=click.Choice(['hvg', 'angl', 'full', 'rand', 'topbtvr', 'bottombtvr']))
 @click.option("--label_key",
               default="CellType",
               help="Label key specifying a column in the metadata that specifies the cell type information")
 
 def calc_bNMI(
-    integrated_h5ad,
+    original_h5ad,
+    embedding_tsv,
     outfile,
     sample,
     gene_selection,
@@ -44,9 +48,11 @@ def calc_bNMI(
     """
     Calculate balanced NMI (bNMI) for an integrated AnnData object.
     """
-    adata_integrated = sc.read_h5ad(integrated_h5ad) # is already log normalized => located in .X 
-    adata_integrated = adata_integrated.copy()
-    adata_integrated.obs[label_key] = adata_integrated.obs[label_key].cat.remove_unused_categories()
+    emb_df = pd.read_csv(embedding_tsv, sep="\t", index_col=0)
+    adata_orig = sc.read_h5ad(original_h5ad)
+    adata_integrated = adata_orig[emb_df.index, :].copy()
+    adata_integrated.obsm["X_emb"] = emb_df.values
+    adata_integrated.obs[label_key] = adata_integrated.obs[label_key].astype("category").cat.remove_unused_categories()
 
     # Build nearest neighbor graph on the integrated embedding
     sc.pp.neighbors(adata_integrated, use_rep = "X_emb")

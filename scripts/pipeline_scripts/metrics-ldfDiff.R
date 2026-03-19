@@ -9,10 +9,10 @@ option_list <- list(
                             default = NA,
                             type = "character",
                             help = "File location of the original h5ad input file"),
-    make_option(c("-d", "--integrated_h5ad"),
+    make_option(c("-d", "--embedding_tsv"),
                             default = NA,
                             type = "character",
-                            help = "File location of the integrated h5ad file"),
+                            help = "File location of the embedding TSV file (cell barcodes as row index)"),
     make_option(c("-o", "--outfile"),
                             default = NA,
                             type = "character",
@@ -28,7 +28,7 @@ option_list <- list(
     make_option(c("-g", "--gene_selection"),
                             default = NA,
                             type = "character",
-                            help = "gene selection method. One of ['hvg', 'angl', 'full', 'rand']"),
+                            help = "gene selection method. One of ['hvg', 'angl', 'full', 'rand', 'topbtvr', 'bottombtvr']"),
     make_option(c("-b", "--batch_key"),
                             default = "batch",
                             type = "character",
@@ -148,10 +148,12 @@ original_sce <- anndataR::read_h5ad(
     args$original_h5ad,
     to = "SingleCellExperiment"
 )
-integrated_sce <- anndataR::read_h5ad(
-    args$integrated_h5ad,
-    to = "SingleCellExperiment"
-)
+emb_df <- read.table(args$embedding_tsv, sep = "\t", header = TRUE, row.names = 1)
+integrated_sce <- original_sce[, rownames(emb_df)]
+SingleCellExperiment::reducedDim(integrated_sce, "emb") <- as.matrix(emb_df)
+# anndataR reads colData columns as character; ldfSce (inner function of
+# CellMixS::ldfDiff) checks levels() without as.factor(), so a factor is required
+integrated_sce[[args$batch_key]] <- factor(integrated_sce[[args$batch_key]])
 ldfdiff_score <- calculate_ldfDiff(
     original_sce = original_sce,
     integrated_sce = integrated_sce,
