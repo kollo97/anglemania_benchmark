@@ -1,0 +1,591 @@
+---
+title: "Sanity Check: Top vs Bottom BTVR Genes for Integration"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+---
+
+**Rationale**: BTVR (Between-to-Total Variance Ratio) captures the ratio of
+biological to technical gene variance. Genes with high BTVR are biologically
+informative and batch-robust — exactly what good feature selection for
+integration should target. This notebook verifies this by running scvi and
+scanorama integration on the top 500 vs bottom 500 BTVR genes from a simulated
+dataset (where ground-truth variance factors are known), then comparing
+integration metrics between the two groups. Good integration metrics with
+top-BTVR genes and poor metrics with bottom-BTVR genes confirm the hypothesis.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = FALSE)
+knitr::opts_chunk$set(fig.height = 7)
+knitr::opts_chunk$set(fig.width = 12)
+```
+
+# Parameters
+
+```{r params}
+.libPaths(.Library)
+
+# ---- paths ----
+base_dir   <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark"
+out_dir    <- file.path(base_dir, "output", "sanity_check_btvr_top_vs_bottom")
+scripts_dir <- file.path(base_dir, "scripts")
+pipeline_dir <- file.path(scripts_dir, "pipeline_scripts")
+
+# ---- simulation ----
+n_genes      <- 5000
+n_batches    <- 3
+n_groups     <- 3
+cells_per_group <- 500   # cells per group per batch
+batch_facLoc <- 0.3      # moderate batch effects
+de_facLoc    <- 0.3      # moderate biological signal
+set_seed     <- 42
+
+# ---- gene selection ----
+n_genes_select <- 500    # top/bottom N by BTVR
+
+# ---- integration ----
+batch_key  <- "Batch"
+label_key  <- "Group"
+integration_methods <- c("scvi", "scanorama")
+gene_sets   <- c("top_btvr", "bottom_btvr")
+```
+
+# Setup
+
+```{r libraries}
+suppressPackageStartupMessages({
+    library(splatter)
+    library(zellkonverter)
+    library(SingleCellExperiment)
+    library(dplyr)
+    library(tidyr)
+    library(ggplot2)
+    library(scales)
+    library(patchwork)
+    library(glue)
+    library(uwot)
+})
+
+source(file.path(scripts_dir, "ggplot_utils.R"))
+today <- format(Sys.Date(), "%Y%m%d")
+```
+
+```{r create_dirs}
+dirs_needed <- c(
+    out_dir,
+    file.path(out_dir, "preprocessed"),
+    file.path(out_dir, "plots")
+)
+for (d in dirs_needed) {
+    if (!dir.exists(d)) dir.create(d, recursive = TRUE)
+}
+for (method in integration_methods) {
+    for (gs in gene_sets) {
+        d <- file.path(out_dir, "integration", "sim", method)
+        if (!dir.exists(d)) dir.create(d, recursive = TRUE)
+        d <- file.path(out_dir, "metrics", "sim", method)
+        if (!dir.exists(d)) dir.create(d, recursive = TRUE)
+    }
+}
+```
+
+# Simulate data
+
+```{r simulate, cache=TRUE}
+sim_h5ad <- file.path(out_dir, "sim.h5ad")
+
+set.seed(set_seed)
+sim <- splatSimulate(
+    batchCells  = rep(cells_per_group * n_groups, n_batches),
+    group.prob  = rep(1 / n_groups, n_groups),
+    batch.facLoc  = batch_facLoc,
+    batch.facScale = 0.1,
+    method      = "groups",
+    verbose     = FALSE,
+    out.prob    = 0.001,
+    de.prob     = 0.1,
+    de.facLoc   = de_facLoc,
+    de.facScale = 0.4,
+    bcv.common  = 0.1,
+    nGenes      = n_genes
+)
+
+message("Simulated: ", ncol(sim), " cells × ", nrow(sim), " genes")
+message("Batches: ", paste(unique(sim$Batch), collapse=", "))
+message("Groups: ",  paste(unique(sim$Group),  collapse=", "))
+
+if (!file.exists(sim_h5ad)) {
+    # Write raw counts to X for compatibility with integration.py
+    writeH5AD(sim, file = sim_h5ad, X_name = "counts")
+    message("Wrote simulated data to: ", sim_h5ad)
+} else {
+    message("Simulated h5ad already exists: ", sim_h5ad)
+}
+```
+
+# Compute BTVR from ground truth
+
+BTVR = log( (BioVar + ε) / (TechVar + ε) ), where:
+- **BioVar** = variance of differential expression factors across groups (`DEFacGroup*`)
+- **TechVar** = variance of batch factors across batches (`BatchFacBatch*`)
+
+Higher BTVR → more biologically variable, less batch-driven → better for integration.
+
+```{r compute_btvr}
+compute_btvr <- function(rowdata) {
+    bio_cols  <- dplyr::select(as.data.frame(rowdata), starts_with("DEFacGroup"))
+    tech_cols <- dplyr::select(as.data.frame(rowdata), starts_with("BatchFacBatch"))
+
+    raw_BioVar  <- apply(bio_cols,  1, var)
+    raw_TechVar <- apply(tech_cols, 1, var)
+
+    # log-ratio: high = biologically variable, not technically variable
+    BTVR_raw <- log((raw_BioVar + 1e-10) / (raw_TechVar + 1e-10))
+
+    tibble(
+        gene       = rownames(rowdata),
+        raw_BioVar = raw_BioVar,
+        raw_TechVar = raw_TechVar,
+        BTVR       = BTVR_raw,
+        BTVR_scaled = rescale(BTVR_raw)
+    )
+}
+
+btvr_df <- compute_btvr(rowData(sim))
+btvr_df <- btvr_df[order(btvr_df$BTVR, decreasing = TRUE), ]
+head(btvr_df)
+```
+
+# Visualise BTVR distribution
+
+```{r plot_btvr_dist, fig.height=5}
+p_dist <- ggplot(btvr_df, aes(x = BTVR)) +
+    geom_histogram(bins = 80, fill = "#64487A", color = "white", linewidth = 0.2) +
+    geom_vline(
+        xintercept = btvr_df$BTVR[n_genes_select],
+        linetype = "dashed", color = "steelblue", linewidth = 0.8
+    ) +
+    geom_vline(
+        xintercept = btvr_df$BTVR[nrow(btvr_df) - n_genes_select + 1],
+        linetype = "dashed", color = "tomato", linewidth = 0.8
+    ) +
+    annotate("text", x = btvr_df$BTVR[n_genes_select] + 0.05,
+             y = Inf, vjust = 1.5, hjust = 0, size = 3.5, color = "steelblue",
+             label = glue("top {n_genes_select} cutoff")) +
+    annotate("text", x = btvr_df$BTVR[nrow(btvr_df) - n_genes_select + 1] - 0.05,
+             y = Inf, vjust = 1.5, hjust = 1, size = 3.5, color = "tomato",
+             label = glue("bottom {n_genes_select} cutoff")) +
+    labs(
+        title = glue("BTVR distribution across {n_genes} simulated genes"),
+        x = "log( BioVar / TechVar )",
+        y = "Count"
+    )
+p_dist
+
+ggsave(
+    file.path(out_dir, "plots", glue("{today}_btvr_distribution.pdf")),
+    p_dist, width = 8, height = 4
+)
+```
+
+```{r plot_biovar_vs_techvar, fig.height=5}
+btvr_df_labeled <- btvr_df |>
+    mutate(gene_set = case_when(
+        row_number() <= n_genes_select          ~ "top BTVR",
+        row_number() > n() - n_genes_select     ~ "bottom BTVR",
+        TRUE                                    ~ "other"
+    ))
+
+p_scatter <- ggplot(btvr_df_labeled, aes(x = raw_TechVar, y = raw_BioVar, color = gene_set)) +
+    geom_point(size = 0.4, alpha = 0.5) +
+    scale_color_manual(values = c("top BTVR" = "steelblue", "bottom BTVR" = "tomato", "other" = "grey70")) +
+    scale_x_log10() + scale_y_log10() +
+    labs(
+        title = "BioVar vs TechVar (ground truth)",
+        x = "TechVar (BatchFacBatch variance)",
+        y = "BioVar (DEFacGroup variance)",
+        color = "Gene set"
+    )
+p_scatter
+
+ggsave(
+    file.path(out_dir, "plots", glue("{today}_biovar_vs_techvar.pdf")),
+    p_scatter, width = 7, height = 5
+)
+```
+
+# Select gene sets
+
+```{r select_genes}
+top_genes    <- btvr_df$gene[seq_len(n_genes_select)]
+bottom_genes <- btvr_df$gene[seq(nrow(btvr_df) - n_genes_select + 1, nrow(btvr_df))]
+
+message("Top BTVR genes: BTVR range [",
+        round(min(btvr_df$BTVR[seq_len(n_genes_select)]), 2), ", ",
+        round(max(btvr_df$BTVR[seq_len(n_genes_select)]), 2), "]")
+message("Bottom BTVR genes: BTVR range [",
+        round(min(btvr_df$BTVR[seq(nrow(btvr_df) - n_genes_select + 1, nrow(btvr_df))]), 2), ", ",
+        round(max(btvr_df$BTVR[seq(nrow(btvr_df) - n_genes_select + 1, nrow(btvr_df))]), 2), "]")
+
+# Write gene list TSVs (same format as prepare_inputs.R output)
+gene_lists <- list(
+    top_btvr    = top_genes,
+    bottom_btvr = bottom_genes
+)
+
+gene_tsv_paths <- list()
+for (gs in names(gene_lists)) {
+    path <- file.path(out_dir, "preprocessed", glue("sim_{gs}.tsv"))
+    write.table(
+        data.frame(hgnc_symbol = gene_lists[[gs]]),
+        path, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE
+    )
+    gene_tsv_paths[[gs]] <- path
+    message("Wrote gene list: ", path)
+}
+```
+
+# Run integrations
+
+Integration is done via `integration.py` (same script as in the pipeline), which
+normalises internally and stores the embedding in `obsm["X_emb"]`.
+
+```{r integrate}
+integrated_paths <- list()
+
+for (method in integration_methods) {
+    for (gs in gene_sets) {
+        outfile <- file.path(out_dir, "integration", "sim", method,
+                             glue("sim_{gs}.h5ad"))
+        integrated_paths[[glue("{method}_{gs}")]] <- outfile
+
+        if (file.exists(outfile)) {
+            message("[skip] Integration already done: ", basename(outfile))
+            next
+        }
+
+        message("\n>>> Integrating: method=", method, "  gene_set=", gs)
+        ret <- system2(
+            "python3",
+            args = c(
+                file.path(pipeline_dir, "integration.py"),
+                glue("--infile={sim_h5ad}"),
+                glue("--feature_subset={gene_tsv_paths[[gs]]}"),
+                glue("--outfile={outfile}"),
+                glue("--integration_method={method}"),
+                glue("--batch_key={batch_key}"),
+                glue("--label_key={label_key}")
+            ),
+            stdout = TRUE, stderr = TRUE
+        )
+        message(paste(ret, collapse = "\n"))
+        if (!file.exists(outfile)) {
+            warning("Integration output not found after running: ", outfile)
+        }
+    }
+}
+message("All integrations done.")
+```
+
+# Run metrics
+
+Metrics are computed for each integration using the pipeline scripts directly.
+
+```{r metrics}
+metric_paths <- list()
+
+run_metric <- function(metric_name, cmd, args, outfile) {
+    if (file.exists(outfile)) {
+        message("[skip] Metric already computed: ", basename(outfile))
+        return(invisible(NULL))
+    }
+    message("\n>>> Computing ", metric_name, ": ", basename(outfile))
+    ret <- system2(cmd, args = args, stdout = TRUE, stderr = TRUE)
+    message(paste(ret, collapse = "\n"))
+    if (!file.exists(outfile)) {
+        warning(metric_name, " output not found: ", outfile)
+    }
+}
+
+for (method in integration_methods) {
+    for (gs in gene_sets) {
+        integrated_h5ad <- integrated_paths[[glue("{method}_{gs}")]]
+        metrics_dir     <- file.path(out_dir, "metrics", "sim", method)
+        sample_label    <- "sim"
+
+        if (!file.exists(integrated_h5ad)) {
+            message("[skip] No integration output found for ", method, " / ", gs)
+            next
+        }
+
+        # ---- scib_metrics ----
+        scib_out <- file.path(metrics_dir, glue("sim_{gs}_scibmetrics.tsv"))
+        metric_paths[[glue("scib_{method}_{gs}")]] <- scib_out
+        run_metric("scib_metrics", "python3",
+            args = c(
+                file.path(pipeline_dir, "metrics-scib_metrics.py"),
+                glue("--original_h5ad={sim_h5ad}"),
+                glue("--integrated_h5ad={integrated_h5ad}"),
+                glue("--outfile={scib_out}"),
+                glue("--sample={sample_label}"),
+                glue("--gene_selection={gs}"),
+                glue("--integration_method={method}"),
+                glue("--batch_key={batch_key}"),
+                glue("--label_key={label_key}")
+            ),
+            outfile = scib_out
+        )
+
+        # ---- bNMI ----
+        bnmi_out <- file.path(metrics_dir, glue("sim_{gs}_bnmi.tsv"))
+        metric_paths[[glue("bnmi_{method}_{gs}")]] <- bnmi_out
+        run_metric("bNMI", "python3",
+            args = c(
+                file.path(pipeline_dir, "metrics-bNMI.py"),
+                glue("--integrated_h5ad={integrated_h5ad}"),
+                glue("--outfile={bnmi_out}"),
+                glue("--sample={sample_label}"),
+                glue("--gene_selection={gs}"),
+                glue("--integration_method={method}"),
+                glue("--label_key={label_key}")
+            ),
+            outfile = bnmi_out
+        )
+
+        # ---- CMS ----
+        cms_out <- file.path(metrics_dir, glue("sim_{gs}_cms.tsv"))
+        metric_paths[[glue("cms_{method}_{gs}")]] <- cms_out
+        run_metric("CMS", "Rscript",
+            args = c(
+                file.path(pipeline_dir, "metrics-cms.R"),
+                "--integrated_h5ad", integrated_h5ad,
+                "--batch_key",       batch_key,
+                "--outfile",         cms_out,
+                "--sample",          sample_label,
+                "--gene_selection",  gs,
+                "--integration_method", method
+            ),
+            outfile = cms_out
+        )
+
+        # ---- ldfDiff ----
+        ldf_out <- file.path(metrics_dir, glue("sim_{gs}_ldfDiff.tsv"))
+        metric_paths[[glue("ldf_{method}_{gs}")]] <- ldf_out
+        run_metric("ldfDiff", "Rscript",
+            args = c(
+                file.path(pipeline_dir, "metrics-ldfDiff.R"),
+                "--original_h5ad",   sim_h5ad,
+                "--integrated_h5ad", integrated_h5ad,
+                "--batch_key",       batch_key,
+                "--label_key",       label_key,
+                "--outfile",         ldf_out,
+                "--sample",          sample_label,
+                "--gene_selection",  gs,
+                "--integration_method", method
+            ),
+            outfile = ldf_out
+        )
+    }
+}
+message("All metrics done.")
+```
+
+# Combine metrics
+
+```{r combine_metrics}
+combined_out <- file.path(out_dir, "metrics", "combined_metrics.tsv")
+
+existing_scib <- Filter(file.exists, unname(metric_paths[grepl("^scib_", names(metric_paths))]))
+existing_bnmi <- Filter(file.exists, unname(metric_paths[grepl("^bnmi_", names(metric_paths))]))
+existing_cms  <- Filter(file.exists, unname(metric_paths[grepl("^cms_",  names(metric_paths))]))
+existing_ldf  <- Filter(file.exists, unname(metric_paths[grepl("^ldf_",  names(metric_paths))]))
+
+if (length(existing_scib) > 0 && length(existing_bnmi) > 0 &&
+    length(existing_cms) > 0  && length(existing_ldf) > 0) {
+
+    scib_arg <- paste(existing_scib, collapse = " ")
+    bnmi_arg <- paste(existing_bnmi, collapse = " ")
+    cms_arg  <- paste(existing_cms,  collapse = " ")
+    ldf_arg  <- paste(existing_ldf,  collapse = " ")
+
+    ret <- system2(
+        "python3",
+        args = c(
+            file.path(pipeline_dir, "combine_metrics.py"),
+            "--scib_metrics", existing_scib,
+            "--bnmi",         existing_bnmi,
+            "--cms",          existing_cms,
+            "--ldfdiff",      existing_ldf,
+            "--outfile",      combined_out
+        ),
+        stdout = TRUE, stderr = TRUE
+    )
+    message(paste(ret, collapse = "\n"))
+} else {
+    message("Not all metric files available yet — skipping combine step.")
+    message("Missing: scib=", length(existing_scib), " bnmi=", length(existing_bnmi),
+            " cms=", length(existing_cms), " ldf=", length(existing_ldf))
+}
+```
+
+# Visualise metrics
+
+```{r load_metrics}
+if (!file.exists(combined_out)) {
+    stop("Combined metrics file not found: ", combined_out,
+         "\nMake sure all integrations and metrics ran successfully.")
+}
+
+metrics <- read.delim(combined_out) |>
+    mutate(
+        gene_selection   = factor(gene_selection,   levels = c("top_btvr", "bottom_btvr")),
+        integration_method = factor(integration_method, levels = integration_methods),
+        condition        = glue("{integration_method} / {gene_selection}")
+    )
+
+metrics
+```
+
+```{r plot_metrics_bar, fig.height=8}
+metric_cols <- c("Silhouette label", "Isolated labels", "bNMI", "cLISI", "ldfDiff",
+                 "PCR comparison", "iLISI", "cms", "BRAS",
+                 "Bio conservation", "Batch correction", "Total")
+metric_cols_present <- intersect(metric_cols, colnames(metrics))
+
+metrics_long <- metrics |>
+    select(integration_method, gene_selection, all_of(metric_cols_present)) |>
+    pivot_longer(
+        cols      = all_of(metric_cols_present),
+        names_to  = "metric",
+        values_to = "score"
+    ) |>
+    mutate(
+        metric_type = case_when(
+            metric %in% c("Silhouette label", "Isolated labels", "bNMI", "cLISI", "ldfDiff") ~ "Bio conservation",
+            metric %in% c("PCR comparison", "iLISI", "cms", "BRAS")                           ~ "Batch correction",
+            metric %in% c("Bio conservation", "Batch correction", "Total")                    ~ "Summary",
+            TRUE ~ "Other"
+        ),
+        metric = factor(metric, levels = metric_cols_present),
+        gene_selection = factor(gene_selection, levels = c("top_btvr", "bottom_btvr"),
+                                labels = c("Top BTVR", "Bottom BTVR"))
+    )
+
+p_metrics <- ggplot(
+        metrics_long |> filter(metric_type != "Summary"),
+        aes(x = gene_selection, y = score, fill = gene_selection)
+    ) +
+    geom_col(position = "dodge", width = 0.7) +
+    scale_fill_manual(values = c("Top BTVR" = "steelblue", "Bottom BTVR" = "tomato")) +
+    facet_grid(metric_type ~ interaction(metric, integration_method), scales = "free_y") +
+    scale_y_continuous(limits = c(0, 1)) +
+    labs(
+        title = glue("Integration metrics: top {n_genes_select} vs bottom {n_genes_select} BTVR genes"),
+        x = NULL, y = "Score (higher = better)", fill = "Gene selection"
+    ) +
+    theme(
+        axis.text.x    = element_blank(),
+        axis.ticks.x   = element_blank(),
+        strip.text     = element_text(size = 7),
+        legend.position = "bottom"
+    )
+p_metrics
+
+ggsave(
+    file.path(out_dir, "plots", glue("{today}_metrics_top_vs_bottom_btvr.pdf")),
+    p_metrics, width = 16, height = 7
+)
+```
+
+```{r plot_summary_metrics, fig.height=5}
+p_summary <- ggplot(
+        metrics_long |> filter(metric_type == "Summary"),
+        aes(x = gene_selection, y = score, fill = gene_selection)
+    ) +
+    geom_col(width = 0.6) +
+    geom_text(aes(label = round(score, 3)), vjust = -0.4, size = 3.5) +
+    scale_fill_manual(values = c("Top BTVR" = "steelblue", "Bottom BTVR" = "tomato")) +
+    scale_y_continuous(limits = c(0, 1.05)) +
+    facet_grid(metric ~ integration_method) +
+    labs(
+        title = "Summary scores",
+        x = NULL, y = "Score", fill = "Gene selection"
+    ) +
+    theme(legend.position = "none")
+p_summary
+
+ggsave(
+    file.path(out_dir, "plots", glue("{today}_summary_scores_top_vs_bottom_btvr.pdf")),
+    p_summary, width = 9, height = 7
+)
+```
+
+# UMAPs
+
+Load integrated embeddings, run 2D UMAP, and plot coloured by batch and cell type.
+
+```{r umap_helper}
+plot_umap_from_h5ad <- function(h5ad_path, title) {
+    if (!file.exists(h5ad_path)) {
+        message("File not found, skipping UMAP: ", h5ad_path)
+        return(NULL)
+    }
+    adt <- anndataR::read_h5ad(h5ad_path)
+    x_emb <- adt$obsm[["X_emb"]]
+    if (is.null(x_emb)) {
+        message("No X_emb found in: ", h5ad_path)
+        return(NULL)
+    }
+    set.seed(42)
+    umap_coords <- uwot::umap(x_emb, n_components = 2, n_threads = 4)
+    df_umap <- data.frame(
+        UMAP1 = umap_coords[, 1],
+        UMAP2 = umap_coords[, 2],
+        Batch = adt$obs[[batch_key]],
+        Group = adt$obs[[label_key]]
+    )
+    p_batch <- ggplot(df_umap, aes(UMAP1, UMAP2, color = Batch)) +
+        geom_point(size = 0.3, alpha = 0.4) +
+        labs(title = paste0(title, "\n(by batch)")) +
+        theme(legend.position = "right", plot.title = element_text(size = 9))
+
+    p_group <- ggplot(df_umap, aes(UMAP1, UMAP2, color = Group)) +
+        geom_point(size = 0.3, alpha = 0.4) +
+        labs(title = paste0(title, "\n(by cell type)")) +
+        theme(legend.position = "right", plot.title = element_text(size = 9))
+
+    p_batch + p_group
+}
+```
+
+```{r umaps, fig.height=6, results='asis'}
+for (method in integration_methods) {
+    cat(glue("\n\n## {method}\n\n"))
+    for (gs in gene_sets) {
+        integrated_h5ad <- integrated_paths[[glue("{method}_{gs}")]]
+        gs_label <- if (gs == "top_btvr") glue("Top {n_genes_select} BTVR") else glue("Bottom {n_genes_select} BTVR")
+        p <- plot_umap_from_h5ad(integrated_h5ad, glue("{method} — {gs_label}"))
+        if (!is.null(p)) {
+            cat(glue("\n\n### {gs_label}\n\n"))
+            print(p)
+            ggsave(
+                file.path(out_dir, "plots", glue("{today}_umap_{method}_{gs}.pdf")),
+                p, width = 10, height = 4
+            )
+        }
+    }
+}
+```
+
+# Session info
+
+```{r session_info}
+sessionInfo()
+```

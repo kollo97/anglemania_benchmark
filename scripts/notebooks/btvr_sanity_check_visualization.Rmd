@@ -15,7 +15,7 @@ output:
 **Hypothesis**: Genes with high ground-truth BTVR (Between-to-Total Variance
 Ratio) — high biological signal, low batch noise — should produce better batch
 integration than genes with low BTVR. This notebook validates that hypothesis
-by comparing integration metrics for `top_btvr` vs `bottom_btvr` gene
+by comparing integration metrics for `topbtvr` vs `bottombtvr` gene
 selections against the standard `hvg` and `angl` selections.
 
 **Pipeline**: Results produced by running Snakemake with
@@ -56,34 +56,6 @@ outplot <- file.path(base_dir, "output/plots/btvr_sanity_check/")
 if (!dir.exists(outplot)) dir.create(outplot, recursive = TRUE)
 ```
 
-# Step 0: Create filtered samplesheet (if not yet done)
-
-This chunk creates the filtered samplesheet needed to run the Snakemake
-pipeline. Run this **before** launching Snakemake.
-
-```{r create_samplesheet}
-if (!file.exists(samplesheet_out)) {
-    message("Creating filtered samplesheet: nbatch=4, ngroup=4 ...")
-    ss <- read.delim(samplesheet_src)
-    sub <- ss[ss$nbatch == 4 & ss$ngroup == 4, ]
-    message(nrow(sub), " samples selected")
-    write.table(sub, samplesheet_out, sep = "\t", row.names = FALSE, quote = FALSE)
-    message("Written to: ", samplesheet_out)
-} else {
-    message("Samplesheet already exists: ", samplesheet_out)
-}
-samplesheet <- read.delim(samplesheet_out)
-message(nrow(samplesheet), " samples in samplesheet")
-head(samplesheet)
-```
-
-After running this chunk, launch the pipeline from `scripts/`:
-
-```bash
-cd scripts/
-snakemake -s Snakefile.smk --configfile config_files/config_btvr_sanity_check.yml -n
-snakemake -s Snakefile.smk --configfile config_files/config_btvr_sanity_check.yml --cores 8
-```
 
 ---
 
@@ -111,7 +83,9 @@ get_BTVR <- function(var_df) {
 }
 
 get_var_from_h5ad <- function(h5ad_path) {
-    df <- h5read(h5ad_path, "/var") |> as.data.frame() |> column_to_rownames("_index")
+    df <- h5read(h5ad_path, "/var") |>
+        as.data.frame() |>
+        column_to_rownames("X_index")
     h5closeAll()
     df
 }
@@ -121,11 +95,10 @@ get_var_from_h5ad <- function(h5ad_path) {
 # Use a sample with moderate batch and bio effects as the example
 samplesheet <- read.delim(samplesheet_out)
 example_row <- samplesheet |>
-    filter(batch.facLoc == 0.3, de.facLoc == 0.3) |>
-    slice(1)
+    slice_head(n = 1)
 
 if (nrow(example_row) == 0) {
-    example_row <- samplesheet |> slice(1)
+    example_row <- samplesheet |> slice_head(n = 1)
     message("Fallback: using first row of samplesheet")
 }
 
@@ -160,17 +133,17 @@ btvr_labeled <- map_dfr(names(gene_lists), function(gs) {
         mutate(gene_selection = gs)
 }) |>
     mutate(gene_selection = factor(gene_selection,
-           levels = c("top_btvr", "bottom_btvr", "hvg", "angl")))
+           levels = c("topbtvr", "bottombtvr", "hvg", "angl")))
 
 gs_labels <- c(
-    top_btvr    = "Top 2000 BTVR",
-    bottom_btvr = "Bottom 2000 BTVR",
+    topbtvr    = "Top 2000 BTVR",
+    bottombtvr = "Bottom 2000 BTVR",
     hvg         = "HVG",
     angl        = "anglemania"
 )
 gs_colors <- c(
-    top_btvr    = "#2196F3",
-    bottom_btvr = "#F44336",
+    topbtvr    = "#2196F3",
+    bottombtvr = "#F44336",
     hvg         = "#FF9800",
     angl        = "#64487A"
 )
@@ -239,7 +212,7 @@ metrics <- metrics_raw |>
     ) |>
     mutate(
         gene_selection     = factor(gene_selection,
-            levels = c("top_btvr", "bottom_btvr", "hvg", "angl")),
+            levels = c("topbtvr", "bottombtvr", "hvg", "angl")),
         integration_method = factor(integration_method,
             levels = c("scvi", "scanorama")),
         de.facLoc    = factor(de.facLoc),
@@ -252,7 +225,7 @@ head(metrics)
 
 ## 2.1 Overall summary: boxplot across all conditions
 
-The key sanity check: `top_btvr` should score highest, `bottom_btvr` lowest.
+The key sanity check: `topbtvr` should score highest, `bottombtvr` lowest.
 `angl` and `hvg` should fall somewhere in between (ideally `angl` ≥ `hvg`).
 
 ```{r boxplot_overall, fig.height=6}
@@ -283,11 +256,11 @@ ggsave(file.path(outplot, glue("{today()}_total_score_boxplot.pdf")),
 
 ```{r boxplot_bio_batch, fig.height=8}
 metrics_long <- metrics |>
-    select(gene_selection, integration_method, `Bio conservation`, `Batch correction`, Total) |>
-    pivot_longer(c(`Bio conservation`, `Batch correction`, Total),
+    select(gene_selection, integration_method, Bio.conservation, Batch.correction, Total) |>
+    pivot_longer(c(Bio.conservation, Batch.correction, Total),
                  names_to = "metric_type", values_to = "score") |>
     mutate(metric_type = factor(metric_type,
-           levels = c("Bio conservation", "Batch correction", "Total")))
+           levels = c("Bio.conservation", "Batch.correction", "Total")))
 
 p_box2 <- ggplot(metrics_long, aes(gene_selection, score, fill = gene_selection)) +
     geom_boxplot(outlier.size = 0.4, alpha = 0.8) +
@@ -317,8 +290,8 @@ Using the same heatmap style as `bm_simulated_visualization.Rmd`.
 
 ```{r heatmap_total, fig.height=8}
 heatmap_labels <- c(
-    top_btvr    = "Top BTVR",
-    bottom_btvr = "Bottom BTVR",
+    topbtvr    = "Top BTVR",
+    bottombtvr = "Bottom BTVR",
     hvg         = "HVG",
     angl        = "anglemania"
 )
@@ -348,7 +321,7 @@ for (m in levels(metrics$integration_method)) {
         filter(integration_method == m) |>
         draw_heatmap2(
             df     = _,
-            score  = "Bio conservation",
+            score  = "Bio.conservation",
             fill   = "mean",
             labels = heatmap_labels,
             scale_fill_limits = c(0, 1)
@@ -368,7 +341,7 @@ for (m in levels(metrics$integration_method)) {
         filter(integration_method == m) |>
         draw_heatmap2(
             df     = _,
-            score  = "Batch correction",
+            score  = "Batch.correction",
             fill   = "mean",
             labels = heatmap_labels,
             scale_fill_limits = c(0, 1)
@@ -384,18 +357,18 @@ for (m in levels(metrics$integration_method)) {
 
 ## 2.3 Top BTVR vs Bottom BTVR: direct comparison
 
-The core sanity check — how much does top_btvr beat bottom_btvr?
+The core sanity check — how much does topbtvr beat bottombtvr?
 
 ```{r delta_btvr, fig.height=6}
 delta_df <- metrics |>
-    filter(gene_selection %in% c("top_btvr", "bottom_btvr")) |>
+    filter(gene_selection %in% c("topbtvr", "bottombtvr")) |>
     select(sample, integration_method, gene_selection, Total,
-           `Bio conservation`, `Batch correction`,
+           Bio.conservation, Batch.correction,
            batch.facLoc, de.facLoc) |>
-    pivot_longer(c(Total, `Bio conservation`, `Batch correction`),
+    pivot_longer(c(Total, Bio.conservation, Batch.correction),
                  names_to = "metric", values_to = "score") |>
     pivot_wider(names_from = gene_selection, values_from = score) |>
-    mutate(delta = top_btvr - bottom_btvr)
+    mutate(delta = topbtvr - bottombtvr)
 
 p_delta <- ggplot(delta_df, aes(metric, delta, fill = metric)) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
@@ -412,7 +385,7 @@ p_delta <- ggplot(delta_df, aes(metric, delta, fill = metric)) +
     theme(legend.position = "none")
 
 p_delta
-ggsave(file.path(outplot, glue("{today()}_delta_top_vs_bottom_btvr.pdf")),
+ggsave(file.path(outplot, glue("{today()}_delta_top_vs_bottombtvr.pdf")),
        p_delta, width = 10, height = 6)
 ```
 
@@ -422,7 +395,7 @@ ggsave(file.path(outplot, glue("{today()}_delta_top_vs_bottom_btvr.pdf")),
 rank_df <- metrics |>
     select(sample, integration_method, gene_selection, Total) |>
     mutate(gene_selection = factor(gene_selection,
-           levels = c("top_btvr", "angl", "hvg", "bottom_btvr"))) |>
+           levels = c("topbtvr", "angl", "hvg", "bottombtvr"))) |>
     group_by(sample, integration_method) |>
     mutate(rank = rank(-Total, ties.method = "average")) |>
     ungroup()

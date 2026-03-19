@@ -1,20 +1,12 @@
 name: btvr_sanity_check
 
-# Subset of facScale0.1 simulations: nbatch=4, ngroup=4 only (36 samples).
-# Create this samplesheet by running the setup chunk in btvr_sanity_check_visualization.Rmd,
-# or manually:
-#   Rscript -e "
-#     ss <- read.delim('/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_facScale0.1.tsv')
-#     sub <- ss[ss\$nbatch == 4 & ss\$ngroup == 4, ]
-#     write.table(sub, '/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_btvr_sanity_check.tsv',
-#                 sep='\t', row.names=FALSE, quote=FALSE)
-#   "
 samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_btvr_sanity_check.tsv"
 
 output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/btvr_sanity_check/"
 out_preprocessed: "preprocessed/"
 out_integration: "integration/"
 out_metrics: "metrics/"
+out_embedding: "embedding/"
 
 batch_key: "Batch"
 label_key: "Group"
@@ -23,5 +15,5 @@ permutation_function: "sample"
 n_genes: 2000
 
 integration_methods: ["scvi", "scanorama"]
-gene_selection: ["hvg", "angl", "top_btvr", "bottom_btvr"]
+gene_selection: ["hvg", "angl", "topbtvr", "bottombtvr"]
 gpu: false
