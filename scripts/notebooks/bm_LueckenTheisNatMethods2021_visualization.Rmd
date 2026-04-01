@@ -21,108 +21,291 @@ knitr::opts_chunk$set(fig.width = 14)
 ```
 
 ```{r}
-outplot <- "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_LueckenTheisNatMethods2021_visualization"
 .libPaths(.Library)
 library(tidyverse)
-library(Seurat)
 library(anndataR)
-# devtools::load_all("../../anglemania")
-library(matrixStats)
+library(SingleCellExperiment)
+library(yaml)
+library(glue)
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
 ```
 
 # Load config
 ```{r}
-cfg <- yaml::read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/LueckenTheis_config.yml")
+cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/LueckenTheis_config.yml")
 ```
 
 # Load metrics
 ```{r}
-# Extract relevant paths
 metrics_path <- cfg$visualization$metrics_file
 samplesheet_path <- cfg$samplesheet
 outplot_bm <- cfg$visualization$outplot_dir_bm_visualization
-# Ensure plot directories exist
+
 if (!dir.exists(outplot_bm)) {
   dir.create(outplot_bm, recursive = TRUE, showWarnings = FALSE)
 }
 
-# Load data
 metrics <- read.delim(metrics_path)
 samplesheet <- read.delim(samplesheet_path)
 metrics <- metrics %>%
-  left_join(samplesheet, by = join_by(sample == sample_name))
+  left_join(samplesheet, by = join_by(sample == sample_name)) %>%
+  mutate(
+    gene_selection = factor(gene_selection, levels = c("hvg", "angl")),
+    integration_method = factor(integration_method)
+  )
 
+head(metrics)
 ```
 
 # Plot
-## combined bar plot
+## Total score: angl vs hvg per sample
 ```{r}
 dodge <- position_dodge(width = 0.7)
 
-p <- metrics %>% 
-  ggplot(aes(x = as.factor(gene_selection), y = Total))+
-  geom_bar(aes(fill = gene_selection), stat = "identity")+
-  facet_wrap(~integration_method+sample, ncol = 6)
-p
-
-ggsave(
-  file = file.path(outplot_bm, "combined_barplot.pdf"),
-  width = 20,
-  height = 10,
-  units = "cm")
-```
-
-## individual bar plot
-```{r}
-for (m in unique(metrics$integration_method)){
-  for(s in unique(metrics$sample)){
-    p <- metrics %>%
-      filter(integration_method == m, sample == s) %>%
-      ggplot(aes(x = as.factor(gene_selection), y = Total)) +
-      geom_bar(aes(fill = gene_selection), stat = "identity", position = "dodge") +
-      scale_y_continuous(limits = c(0, 1)) +
-      theme_minimal() +
-      theme(
-        text = element_text(size = 20, face = "bold"),
-        axis.text.x = element_text(size = 15),
-        plot.title = element_text(size = 10),
-        legend.position = "none"
-      ) +
-      labs(x = "Gene Selection", y = "Integration Score", title = paste0("integration method:", m, "\nsample: ", s))
-
-    print(p)
-    # ggsave(
-    #   file = file.path(outplot, paste0("gene_selection_vs_integration_score_", m, "_", s, ".pdf")),
-    #   width = 11,
-    #   height = 10,
-    #   units = "cm")
-  }
+for (m in unique(metrics$integration_method)) {
+  p <- metrics %>%
+    filter(integration_method == m) %>%
+    ggplot(aes(x = sample, y = Total, fill = gene_selection)) +
+    geom_bar(stat = "identity", position = dodge, width = 0.6) +
+    scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+    scale_y_continuous(limits = c(0, 1)) +
+    theme_bw() +
+    theme(
+      text = element_text(size = 20, face = "bold"),
+      axis.text.x = element_text(angle = 30, hjust = 1),
+      legend.position = "right"
+    ) +
+    labs(
+      x = "Dataset",
+      y = "Integration Score (Total)",
+      title = paste0("Integration method: ", m),
+      fill = "Gene selection"
+    )
+  print(p)
+  ggsave(
+    file = file.path(outplot_bm, glue("{today()}_{m}_total_score_barplot.pdf")),
+    plot = p,
+    width = 14,
+    height = 8,
+    units = "cm"
+  )
 }
 ```
 
+## All scores (Total, Bio conservation, Batch correction) — combined
+```{r}
+for (m in unique(metrics$integration_method)) {
+  p <- metrics %>%
+    filter(integration_method == m) %>%
+    pivot_longer(
+      cols = c(Total, Bio.conservation, Batch.correction),
+      names_to = "score_type",
+      values_to = "score"
+    ) %>%
+    mutate(score_type = factor(score_type, levels = c("Total", "Bio.conservation", "Batch.correction"))) %>%
+    ggplot(aes(x = sample, y = score, fill = gene_selection)) +
+    geom_bar(stat = "identity", position = dodge, width = 0.6) +
+    scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+    scale_y_continuous(limits = c(0, 1)) +
+    facet_wrap(~score_type, ncol = 1) +
+    theme_bw() +
+    theme(
+      text = element_text(size = 18, face = "bold"),
+      axis.text.x = element_text(angle = 30, hjust = 1),
+      legend.position = "right",
+      strip.text = element_text(size = 16)
+    ) +
+    labs(
+      x = "Dataset",
+      y = "Score",
+      title = paste0("Integration method: ", m),
+      fill = "Gene selection"
+    )
+  print(p)
+  ggsave(
+    file = file.path(outplot_bm, glue("{today()}_{m}_all_scores_barplot.pdf")),
+    plot = p,
+    width = 20,
+    height = 24,
+    units = "cm"
+  )
+}
+```
 
-# plot cell type distributions per batch
-* for sim2
+## angl vs hvg: dotplot across all samples and methods
+```{r}
+p <- metrics %>%
+  ggplot(aes(x = gene_selection, y = Total, fill = gene_selection)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA) +
+  geom_jitter(
+    aes(fill = gene_selection),
+    alpha = 0.8,
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)
+  ) +
+  scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(~integration_method) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 20, face = "bold"),
+    aspect.ratio = 1,
+    legend.position = "none"
+  ) +
+  labs(x = "Gene Selection", y = "Total Integration Score")
+p
+ggsave(
+  file = file.path(outplot_bm, glue("{today()}_total_score_boxplot.pdf")),
+  plot = p,
+  width = 14,
+  height = 10,
+  units = "cm"
+)
+```
+
+## Bio conservation
+```{r}
+p <- metrics %>%
+  ggplot(aes(x = gene_selection, y = Bio.conservation, fill = gene_selection)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA) +
+  geom_jitter(
+    aes(fill = gene_selection),
+    alpha = 0.8,
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)
+  ) +
+  scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(~integration_method) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 20, face = "bold"),
+    aspect.ratio = 1,
+    legend.position = "none"
+  ) +
+  labs(x = "Gene Selection", y = "Bio Conservation Score")
+p
+ggsave(
+  file = file.path(outplot_bm, glue("{today()}_bio_conservation_boxplot.pdf")),
+  plot = p,
+  width = 14,
+  height = 10,
+  units = "cm"
+)
+```
+
+## Batch correction
+```{r}
+p <- metrics %>%
+  ggplot(aes(x = gene_selection, y = Batch.correction, fill = gene_selection)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA) +
+  geom_jitter(
+    aes(fill = gene_selection),
+    alpha = 0.8,
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)
+  ) +
+  scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(~integration_method) +
+  theme_bw() +
+  theme(
+    text = element_text(size = 20, face = "bold"),
+    aspect.ratio = 1,
+    legend.position = "none"
+  ) +
+  labs(x = "Gene Selection", y = "Batch Correction Score")
+p
+ggsave(
+  file = file.path(outplot_bm, glue("{today()}_batch_correction_boxplot.pdf")),
+  plot = p,
+  width = 14,
+  height = 10,
+  units = "cm"
+)
+```
+
+## Individual metrics overview
+```{r}
+individual_metrics <- c(
+  "Isolated.labels", "Silhouette.label", "cLISI",
+  "BRAS", "iLISI", "PCR.comparison", "bNMI", "cms", "ldfDiff"
+)
+# keep only columns that exist
+individual_metrics <- intersect(individual_metrics, colnames(metrics))
+
+metrics_long <- metrics %>%
+  pivot_longer(
+    cols = all_of(individual_metrics),
+    names_to = "metric",
+    values_to = "value"
+  )
+
+for (m in unique(metrics$integration_method)) {
+  p <- metrics_long %>%
+    filter(integration_method == m) %>%
+    ggplot(aes(x = gene_selection, y = value, fill = gene_selection)) +
+    geom_boxplot(width = 0.5, outlier.shape = NA) +
+    geom_jitter(
+      alpha = 0.7,
+      position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.7)
+    ) +
+    scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+    facet_wrap(~metric, scales = "free_y") +
+    theme_bw() +
+    theme(
+      text = element_text(size = 15, face = "bold"),
+      legend.position = "none",
+      strip.text = element_text(size = 13)
+    ) +
+    labs(
+      x = "Gene Selection",
+      y = "Score",
+      title = paste0("Individual metrics — ", m)
+    )
+  print(p)
+  ggsave(
+    file = file.path(outplot_bm, glue("{today()}_{m}_individual_metrics.pdf")),
+    plot = p,
+    width = 28,
+    height = 20,
+    units = "cm"
+  )
+}
+```
+
+# Cell type distributions per batch
+## sim2
 ```{r}
 sim2_path <- samplesheet %>%
   filter(sample_name == "sim2_raw") %>%
   pull(file_path)
-sim2 <- read_h5ad(sim2_path, to = "SingleCellExperiment")
-sim2
-library(SingleCellExperiment)
-meta <- sim2@colData %>% as.data.frame()
-colnames(meta)
-meta %>%
-  summarize(n = n(), .by = c(SubBatch, celltype)) %>%
-  ggplot(aes(x = SubBatch, y = n, fill = celltype)) +
-  geom_col(position = "stack")
 
-meta %>%
-  summarize(n = n(), .by = c(SubBatch, celltype)) %>%
-  ggplot(aes(x = celltype, y = n, fill = SubBatch)) +
-  geom_col(position = "stack")
+if (length(sim2_path) > 0) {
+  sim2 <- read_h5ad(sim2_path, to = "SingleCellExperiment")
+  meta <- sim2@colData %>% as.data.frame()
 
+  p1 <- meta %>%
+    summarize(n = n(), .by = c(SubBatch, celltype)) %>%
+    ggplot(aes(x = SubBatch, y = n, fill = celltype)) +
+    geom_col(position = "stack") +
+    theme_bw() +
+    theme(text = element_text(size = 15, face = "bold")) +
+    labs(x = "SubBatch", y = "Cell count", title = "sim2: cell types per SubBatch")
+  print(p1)
+
+  p2 <- meta %>%
+    summarize(n = n(), .by = c(SubBatch, celltype)) %>%
+    ggplot(aes(x = celltype, y = n, fill = SubBatch)) +
+    geom_col(position = "stack") +
+    theme_bw() +
+    theme(
+      text = element_text(size = 15, face = "bold"),
+      axis.text.x = element_text(angle = 30, hjust = 1)
+    ) +
+    labs(x = "Cell type", y = "Cell count", title = "sim2: SubBatch per cell type")
+  print(p2)
+}
 ```
 
-
-
+# Session Info
+```{r}
+sessionInfo()
+```
