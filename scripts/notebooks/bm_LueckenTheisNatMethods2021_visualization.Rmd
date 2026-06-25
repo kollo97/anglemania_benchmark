@@ -305,6 +305,120 @@ if (length(sim2_path) > 0) {
 }
 ```
 
+# Statistical Testing
+## angl vs hvg: paired Wilcoxon test on integration scores
+
+One-sample Wilcoxon test on per-sample deltas (angl − hvg).
+H0: median Δ = 0 vs H1: median Δ > 0 (anglemania outperforms HVG).
+p-values are FDR-adjusted across integration methods.
+
+```{r stat_overall}
+diff_df <- metrics %>%
+  filter(gene_selection %in% c("angl", "hvg")) %>%
+  select(sample, integration_method, gene_selection, Total, Bio.conservation, Batch.correction) %>%
+  pivot_wider(
+    names_from  = gene_selection,
+    values_from = c(Total, Bio.conservation, Batch.correction)
+  ) %>%
+  mutate(
+    delta_Total = Total_angl             - Total_hvg,
+    delta_Bio   = Bio.conservation_angl  - Bio.conservation_hvg,
+    delta_Batch = Batch.correction_angl  - Batch.correction_hvg
+  )
+
+stat_results <- diff_df %>%
+  group_by(integration_method) %>%
+  summarise(
+    n                  = n(),
+    median_delta_Total = median(delta_Total, na.rm = TRUE),
+    p_Total            = wilcox.test(delta_Total, mu = 0, alternative = "greater")$p.value,
+    median_delta_Bio   = median(delta_Bio,   na.rm = TRUE),
+    p_Bio              = wilcox.test(delta_Bio,   mu = 0, alternative = "greater")$p.value,
+    median_delta_Batch = median(delta_Batch, na.rm = TRUE),
+    p_Batch            = wilcox.test(delta_Batch, mu = 0, alternative = "greater")$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_Total_fdr  = p.adjust(p_Total,  method = "BH"),
+    p_Bio_fdr    = p.adjust(p_Bio,    method = "BH"),
+    p_Batch_fdr  = p.adjust(p_Batch,  method = "BH")
+  )
+
+stat_results
+```
+
+```{r stat_delta_boxplot, fig.height=5, fig.width=10}
+diff_long <- diff_df %>%
+  pivot_longer(
+    cols      = starts_with("delta_"),
+    names_to  = "score_type",
+    values_to = "delta"
+  ) %>%
+  mutate(score_type = factor(
+    dplyr::recode(score_type,
+      delta_Total = "Total",
+      delta_Bio   = "Bio conservation",
+      delta_Batch = "Batch correction"
+    ),
+    levels = c("Total", "Bio conservation", "Batch correction")
+  ))
+
+p <- ggplot(diff_long, aes(integration_method, delta, fill = integration_method)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_boxplot(outlier.size = 0.5, alpha = 0.8) +
+  geom_jitter(width = 0.1, alpha = 0.6, size = 2) +
+  stat_summary(fun = median, geom = "point", shape = 18, size = 4, color = "white") +
+  scale_fill_manual(values = c("scvi" = "#4E79A7", "scanorama" = "#F28E2B")) +
+  facet_wrap(~score_type) +
+  labs(
+    title    = "Score difference: anglemania − HVG (paired by dataset)",
+    subtitle = "Each point = one dataset; dashed line at 0",
+    x = "Integration method", y = "Δ score (angl − hvg)", fill = NULL
+  ) +
+  theme_bw() +
+  theme(text = element_text(size = 14), legend.position = "none")
+p
+ggsave(
+  file.path(outplot_bm, glue("{today()}_stat_delta_boxplot.pdf")),
+  p, width = 14, height = 6, units = "cm"
+)
+```
+
+## Per-metric individual tests
+
+```{r stat_individual_metrics}
+individual_metrics <- c(
+  "Isolated.labels", "Silhouette.label", "cLISI",
+  "BRAS", "iLISI", "PCR.comparison", "bNMI", "cms", "ldfDiff"
+)
+individual_metrics <- intersect(individual_metrics, colnames(metrics))
+
+diff_individual <- metrics %>%
+  filter(gene_selection %in% c("angl", "hvg")) %>%
+  select(sample, integration_method, gene_selection, all_of(individual_metrics)) %>%
+  pivot_wider(names_from = gene_selection, values_from = all_of(individual_metrics))
+
+stat_individual <- diff_individual %>%
+  group_by(integration_method) %>%
+  summarise(
+    across(
+      all_of(paste0(individual_metrics, "_angl")),
+      .fns = list(
+        median_delta = ~ median(. - get(sub("_angl$", "_hvg", cur_column())), na.rm = TRUE),
+        p_value      = ~ tryCatch(
+          wilcox.test(. - get(sub("_angl$", "_hvg", cur_column())),
+                      mu = 0, alternative = "greater")$p.value,
+          error = function(e) NA_real_
+        )
+      ),
+      .names = "{sub('_angl$', '', .col)}_{.fn}"
+    ),
+    .groups = "drop"
+  )
+
+stat_individual
+```
+
 # Session Info
 ```{r}
 sessionInfo()

@@ -740,40 +740,125 @@ ggsave(
 ```
 
 # Statistical tests
-* is the BioVar higher for genes selected by anglemania
-* is the TechVar lower for genes selected by anglemania
-```{r, include = FALSE, eval = FALSE}
-library(rstatix)
-stat_df <- unnested %>%
-  mutate(gene_selection = factor(gene_selection, levels = c("hvg", "angl"))) %>%
-  group_by(gene_selection, batch.facLoc, de.facLoc) %>%
+
+Are BTVR, BioVar, and TechVar significantly different between anglemania and HVG selected genes?
+
+**Approach**: per sample, compute median BTVR/BioVar/TechVar for each gene_selection.
+Then apply a one-sample Wilcoxon test on the per-sample differences (angl − hvg),
+grouped by simulation condition (batch.facLoc × de.facLoc).
+H1 for BTVR/BioVar: angl > hvg (higher is better). H1 for TechVar: hvg > angl (lower tech noise is better for angl).
+
+```{r stat_btvr_per_sample}
+# Summarise to per-sample medians (avoids treating individual genes as independent)
+per_sample <- unnested %>%
+  group_by(sample_name, gene_selection, batch.facLoc, de.facLoc) %>%
   summarise(
-    mean_BioVar = mean(BioVar, na.rm = TRUE),
-    median_BioVar = median(BioVar, na.rm = TRUE),
-    mean_TechVar = mean(TechVar, na.rm = TRUE),
-    median_TechVar = median(TechVar, na.rm = TRUE),
+    median_BTVR    = median(BTVR,        na.rm = TRUE),
+    median_BioVar  = median(BioVar,      na.rm = TRUE),
+    median_TechVar = median(TechVar,     na.rm = TRUE),
+    median_raw_BioVar  = median(raw_BioVar,  na.rm = TRUE),
+    median_raw_TechVar = median(raw_TechVar, na.rm = TRUE),
     .groups = "drop"
   )
-wilcox_df <- unnested %>%
-  mutate(gene_selection = factor(gene_selection, levels = c("hvg", "angl"))) %>%
+
+diff_btvr <- per_sample %>%
+  pivot_wider(
+    names_from  = gene_selection,
+    values_from = starts_with("median_")
+  ) %>%
+  mutate(
+    delta_BTVR        = median_BTVR_angl        - median_BTVR_hvg,
+    delta_BioVar      = median_BioVar_angl       - median_BioVar_hvg,
+    delta_TechVar     = median_TechVar_hvg       - median_TechVar_angl,  # positive = angl lower tech var
+    delta_raw_BioVar  = median_raw_BioVar_angl   - median_raw_BioVar_hvg,
+    delta_raw_TechVar = median_raw_TechVar_hvg   - median_raw_TechVar_angl
+  )
+
+# Overall test (all conditions pooled)
+overall_tests <- tibble(
+  metric       = c("BTVR", "BioVar", "TechVar (hvg−angl)"),
+  median_delta = c(
+    median(diff_btvr$delta_BTVR,    na.rm = TRUE),
+    median(diff_btvr$delta_BioVar,  na.rm = TRUE),
+    median(diff_btvr$delta_TechVar, na.rm = TRUE)
+  ),
+  p_value = c(
+    wilcox.test(diff_btvr$delta_BTVR,    mu = 0, alternative = "greater")$p.value,
+    wilcox.test(diff_btvr$delta_BioVar,  mu = 0, alternative = "greater")$p.value,
+    wilcox.test(diff_btvr$delta_TechVar, mu = 0, alternative = "greater")$p.value
+  )
+) %>%
+  mutate(p_fdr = p.adjust(p_value, method = "BH"))
+
+cat("=== Overall test (all conditions pooled) ===\n")
+print(overall_tests)
+```
+
+```{r stat_btvr_per_condition}
+# Per-condition Wilcoxon test (batch.facLoc × de.facLoc)
+stat_btvr <- diff_btvr %>%
   group_by(batch.facLoc, de.facLoc) %>%
   summarise(
-    wilcox_BioVar = wilcox_test(formula = raw_BioVar ~ gene_selection, data = cur_data(), p.adjust.method = "fdr", alternative = "less"),
-    wilcox_TechVar = wilcox_test(formula = raw_TechVar ~ gene_selection, data = cur_data(), p.adjust.method = "fdr", alternative = "greater"),
-    wilcox_BTVR = wilcox_test(formula = BTVR ~ gene_selection, data = cur_data(), p.adjust.method = "fdr", alternative = "less"),
+    n                = n(),
+    median_delta_BTVR   = median(delta_BTVR,   na.rm = TRUE),
+    p_BTVR              = tryCatch(wilcox.test(delta_BTVR,   mu = 0, alternative = "greater")$p.value, error = function(e) NA_real_),
+    median_delta_BioVar = median(delta_BioVar,  na.rm = TRUE),
+    p_BioVar            = tryCatch(wilcox.test(delta_BioVar,  mu = 0, alternative = "greater")$p.value, error = function(e) NA_real_),
     .groups = "drop"
+  ) %>%
+  mutate(
+    p_BTVR_fdr   = p.adjust(p_BTVR,   method = "BH"),
+    p_BioVar_fdr = p.adjust(p_BioVar,  method = "BH"),
+    sig_BTVR     = case_when(p_BTVR_fdr   < 0.001 ~ "***", p_BTVR_fdr   < 0.01 ~ "**", p_BTVR_fdr   < 0.05 ~ "*", TRUE ~ "ns"),
+    sig_BioVar   = case_when(p_BioVar_fdr < 0.001 ~ "***", p_BioVar_fdr < 0.01 ~ "**", p_BioVar_fdr < 0.05 ~ "*", TRUE ~ "ns")
   )
 
-stat_df <- stat_df %>%
-  left_join(wilcox_df, by = c("batch.facLoc", "de.facLoc"))
-stat_df <- stat_df %>%
-  unnest(c(wilcox_BioVar, wilcox_TechVar, wilcox_BTVR), names_sep = "_")
+head(stat_btvr)
+```
 
-stat_df %>%
-  mutate(diff_batch_de = batch.facLoc-de.facLoc) %>%
-  ggplot(aes(diff_batch_de, wilcox_TechVar_p)) +
-  geom_point()
+```{r stat_btvr_heatmap, fig.height=6, fig.width=8}
+p_sig_btvr <- ggplot(stat_btvr, aes(x = batch.facLoc, y = de.facLoc, fill = median_delta_BTVR)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sig_BTVR), size = 5) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "#64487A",
+    midpoint = 0, limits = c(-0.15, 0.15), oob = scales::squish
+  ) +
+  coord_equal() +
+  labs(
+    title    = "Paired BTVR test: anglemania vs HVG",
+    subtitle = "Fill = median Δ BTVR (angl − hvg); label = BH-corrected significance",
+    x = "Batch effect (batch.facLoc)", y = "Biological variability (de.facLoc)",
+    fill = "Δ BTVR"
+  ) +
+  theme_bw() +
+  theme(text = element_text(size = 14))
 
+p_sig_btvr
+ggsave(
+  file.path(outplot, glue("{today()}_stat_BTVR_significance_heatmap.pdf")),
+  p_sig_btvr, width = 8, height = 6
+)
+```
+
+```{r stat_btvr_delta_boxplot, fig.height=5, fig.width=5}
+p_delta_btvr <- ggplot(diff_btvr, aes(x = "angl − hvg", y = delta_BTVR)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_boxplot(width = 0.4, fill = "#64487A", alpha = 0.7, outlier.size = 0.5) +
+  stat_summary(fun = median, geom = "point", shape = 18, size = 4, color = "white") +
+  labs(
+    title    = "BTVR difference: anglemania − HVG (per sample)",
+    subtitle = sprintf("Overall Wilcoxon p = %.4g", overall_tests$p_value[1]),
+    x = NULL, y = "Δ median BTVR (angl − hvg)"
+  ) +
+  theme_bw() +
+  theme(text = element_text(size = 14), axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+p_delta_btvr
+ggsave(
+  file.path(outplot, glue("{today()}_stat_BTVR_delta_boxplot.pdf")),
+  p_delta_btvr, width = 5, height = 5
+)
 ```
 
 

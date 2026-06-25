@@ -422,6 +422,162 @@ ggsave(file.path(outplot, glue("{today()}_rank_comparison.pdf")),
        p_rank, width = 10, height = 6)
 ```
 
+# Statistical Testing
+
+## 3.1 BTVR: angl vs hvg across all samples (paired per-sample test)
+
+Compute the median BTVR of selected genes for each sample, then test whether
+anglemania genes have higher median BTVR than HVG genes across all samples.
+H0: median Δ = 0 vs H1: median Δ > 0 (angl selects higher-BTVR genes).
+
+```{r stat_btvr_all_samples}
+# Load gene lists and BTVR values for all samples
+all_btvr_list <- lapply(seq_len(nrow(samplesheet)), function(i) {
+  row         <- samplesheet[i, ]
+  h5ad_path   <- row$file_path
+  sample_name <- row$sample_name
+
+  var_df   <- tryCatch(get_var_from_h5ad(h5ad_path), error = function(e) NULL)
+  if (is.null(var_df)) return(NULL)
+  btvr_all <- get_BTVR(var_df)
+
+  result <- lapply(c("angl", "hvg"), function(gs) {
+    tsv_path <- file.path(preprocessed_dir, glue("{sample_name}_{gs}.tsv"))
+    if (!file.exists(tsv_path)) return(NULL)
+    genes <- read.delim(tsv_path)$hgnc_symbol
+    btvr_all %>%
+      filter(gene %in% genes) %>%
+      summarise(
+        median_BTVR = median(BTVR, na.rm = TRUE),
+        mean_BTVR   = mean(BTVR,   na.rm = TRUE)
+      ) %>%
+      mutate(
+        gene_selection = gs,
+        sample         = sample_name,
+        batch.facLoc   = row$batch.facLoc,
+        de.facLoc      = row$de.facLoc
+      )
+  })
+  bind_rows(result)
+})
+
+btvr_per_sample <- bind_rows(all_btvr_list)
+
+diff_btvr <- btvr_per_sample %>%
+  filter(gene_selection %in% c("angl", "hvg")) %>%
+  pivot_wider(names_from = gene_selection, values_from = c(median_BTVR, mean_BTVR)) %>%
+  mutate(delta_median = median_BTVR_angl - median_BTVR_hvg)
+
+# Overall Wilcoxon (all conditions pooled)
+wt_btvr_overall <- wilcox.test(diff_btvr$delta_median, mu = 0, alternative = "greater")
+cat(sprintf(
+  "Overall BTVR: median Δ = %.4f, p = %.4g, n = %d samples\n",
+  median(diff_btvr$delta_median, na.rm = TRUE),
+  wt_btvr_overall$p.value,
+  nrow(diff_btvr)
+))
+```
+
+```{r stat_btvr_delta_boxplot, fig.height=5, fig.width=5}
+p_btvr_delta <- ggplot(diff_btvr, aes(x = "angl − hvg", y = delta_median)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_boxplot(width = 0.4, fill = "#64487A", alpha = 0.7, outlier.size = 0.5) +
+  stat_summary(fun = median, geom = "point", shape = 18, size = 4, color = "white") +
+  labs(
+    title    = "BTVR difference: anglemania − HVG (per sample)",
+    subtitle = sprintf("Wilcoxon p = %.4g", wt_btvr_overall$p.value),
+    x = NULL, y = "Δ median BTVR (angl − hvg)"
+  ) +
+  theme_bw() +
+  theme(text = element_text(size = 14), axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+p_btvr_delta
+ggsave(file.path(outplot, glue("{today()}_stat_btvr_delta_boxplot.pdf")),
+       p_btvr_delta, width = 5, height = 5)
+```
+
+## 3.2 Integration scores: angl vs hvg (paired Wilcoxon)
+
+```{r stat_integration_angl_hvg}
+diff_scores <- metrics %>%
+  filter(gene_selection %in% c("angl", "hvg")) %>%
+  select(sample, integration_method, gene_selection, Total, Bio.conservation, Batch.correction) %>%
+  pivot_wider(
+    names_from  = gene_selection,
+    values_from = c(Total, Bio.conservation, Batch.correction)
+  ) %>%
+  mutate(
+    delta_Total = Total_angl             - Total_hvg,
+    delta_Bio   = Bio.conservation_angl  - Bio.conservation_hvg,
+    delta_Batch = Batch.correction_angl  - Batch.correction_hvg
+  )
+
+stat_scores <- diff_scores %>%
+  group_by(integration_method) %>%
+  summarise(
+    n                  = n(),
+    median_delta_Total = median(delta_Total, na.rm = TRUE),
+    p_Total            = wilcox.test(delta_Total, mu = 0, alternative = "greater")$p.value,
+    median_delta_Bio   = median(delta_Bio,   na.rm = TRUE),
+    p_Bio              = wilcox.test(delta_Bio,   mu = 0, alternative = "greater")$p.value,
+    median_delta_Batch = median(delta_Batch, na.rm = TRUE),
+    p_Batch            = wilcox.test(delta_Batch, mu = 0, alternative = "greater")$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_Total_fdr  = p.adjust(p_Total,  method = "BH"),
+    p_Bio_fdr    = p.adjust(p_Bio,    method = "BH"),
+    p_Batch_fdr  = p.adjust(p_Batch,  method = "BH")
+  )
+
+stat_scores
+```
+
+## 3.3 Sanity check: topbtvr vs bottombtvr (paired Wilcoxon)
+
+This is the core sanity check — the BTVR oracle should show a highly significant
+improvement. If this test is not significant, the simulation parameters are
+not informative for integration quality.
+
+```{r stat_topbtvr_vs_bottombtvr}
+diff_oracle <- metrics %>%
+  filter(gene_selection %in% c("topbtvr", "bottombtvr")) %>%
+  select(sample, integration_method, gene_selection, Total, Bio.conservation, Batch.correction) %>%
+  pivot_wider(
+    names_from  = gene_selection,
+    values_from = c(Total, Bio.conservation, Batch.correction)
+  ) %>%
+  mutate(
+    delta_Total = Total_topbtvr             - Total_bottombtvr,
+    delta_Bio   = Bio.conservation_topbtvr  - Bio.conservation_bottombtvr,
+    delta_Batch = Batch.correction_topbtvr  - Batch.correction_bottombtvr
+  )
+
+stat_oracle <- diff_oracle %>%
+  group_by(integration_method) %>%
+  summarise(
+    n                  = n(),
+    median_delta_Total = median(delta_Total, na.rm = TRUE),
+    p_Total            = wilcox.test(delta_Total, mu = 0, alternative = "greater")$p.value,
+    median_delta_Bio   = median(delta_Bio,   na.rm = TRUE),
+    p_Bio              = wilcox.test(delta_Bio,   mu = 0, alternative = "greater")$p.value,
+    median_delta_Batch = median(delta_Batch, na.rm = TRUE),
+    p_Batch            = wilcox.test(delta_Batch, mu = 0, alternative = "greater")$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_Total_fdr  = p.adjust(p_Total,  method = "BH"),
+    p_Bio_fdr    = p.adjust(p_Bio,    method = "BH"),
+    p_Batch_fdr  = p.adjust(p_Batch,  method = "BH")
+  )
+
+cat("=== topbtvr vs bottombtvr (oracle sanity check) ===\n")
+print(stat_oracle)
+cat("\n=== angl vs hvg ===\n")
+print(stat_scores)
+```
+
 # Session info
 
 ```{r session_info}

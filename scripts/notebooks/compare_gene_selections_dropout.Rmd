@@ -645,6 +645,145 @@ ggsave(
 )
 ```
 
+# Statistical tests
+
+Are BTVR, BioVar, and TechVar significantly different between anglemania and HVG selected genes?
+
+**Approach**: per sample, compute median BTVR/BioVar/TechVar for each gene_selection.
+Then apply a one-sample Wilcoxon test on the per-sample differences (angl − hvg).
+H1 for BTVR/BioVar: angl > hvg. H1 for TechVar: hvg > angl (lower tech noise for angl).
+
+```{r stat_btvr_per_sample}
+per_sample <- unnested %>%
+  group_by(sample_name, gene_selection, batch.facLoc, de.facLoc, sparsity) %>%
+  summarise(
+    median_BTVR    = median(BTVR,        na.rm = TRUE),
+    median_BioVar  = median(BioVar,      na.rm = TRUE),
+    median_TechVar = median(TechVar,     na.rm = TRUE),
+    .groups = "drop"
+  )
+
+diff_btvr <- per_sample %>%
+  pivot_wider(
+    names_from  = gene_selection,
+    values_from = starts_with("median_")
+  ) %>%
+  mutate(
+    delta_BTVR    = median_BTVR_angl   - median_BTVR_hvg,
+    delta_BioVar  = median_BioVar_angl  - median_BioVar_hvg,
+    delta_TechVar = median_TechVar_hvg  - median_TechVar_angl  # positive = angl has lower tech var
+  )
+
+# Overall test (all conditions pooled)
+overall_tests <- tibble(
+  metric       = c("BTVR", "BioVar", "TechVar (hvg−angl)"),
+  median_delta = c(
+    median(diff_btvr$delta_BTVR,    na.rm = TRUE),
+    median(diff_btvr$delta_BioVar,  na.rm = TRUE),
+    median(diff_btvr$delta_TechVar, na.rm = TRUE)
+  ),
+  p_value = c(
+    wilcox.test(diff_btvr$delta_BTVR,    mu = 0, alternative = "greater")$p.value,
+    wilcox.test(diff_btvr$delta_BioVar,  mu = 0, alternative = "greater")$p.value,
+    wilcox.test(diff_btvr$delta_TechVar, mu = 0, alternative = "greater")$p.value
+  )
+) %>%
+  mutate(p_fdr = p.adjust(p_value, method = "BH"))
+
+cat("=== Overall test (all conditions pooled) ===\n")
+print(overall_tests)
+```
+
+```{r stat_btvr_by_sparsity}
+# Does the BTVR advantage of anglemania change with sparsity?
+stat_by_sparsity <- diff_btvr %>%
+  group_by(sparsity) %>%
+  summarise(
+    n            = n(),
+    median_delta = median(delta_BTVR, na.rm = TRUE),
+    p_value      = tryCatch(
+      wilcox.test(delta_BTVR, mu = 0, alternative = "greater")$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_fdr = p.adjust(p_value, method = "BH"),
+    sig   = case_when(p_fdr < 0.001 ~ "***", p_fdr < 0.01 ~ "**",
+                      p_fdr < 0.05  ~ "*",   TRUE ~ "ns")
+  )
+
+stat_by_sparsity
+```
+
+```{r stat_btvr_per_condition}
+# Per-condition Wilcoxon (batch.facLoc × de.facLoc × sparsity)
+stat_btvr <- diff_btvr %>%
+  group_by(batch.facLoc, de.facLoc) %>%
+  summarise(
+    n                   = n(),
+    median_delta_BTVR   = median(delta_BTVR,  na.rm = TRUE),
+    p_BTVR              = tryCatch(wilcox.test(delta_BTVR, mu = 0, alternative = "greater")$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_BTVR_fdr = p.adjust(p_BTVR, method = "BH"),
+    sig_BTVR   = case_when(p_BTVR_fdr < 0.001 ~ "***", p_BTVR_fdr < 0.01 ~ "**",
+                            p_BTVR_fdr < 0.05  ~ "*",   TRUE ~ "ns")
+  )
+
+head(stat_btvr)
+```
+
+```{r stat_btvr_heatmap, fig.height=6, fig.width=8}
+p_sig_btvr <- ggplot(stat_btvr, aes(x = batch.facLoc, y = de.facLoc, fill = median_delta_BTVR)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sig_BTVR), size = 5) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "#64487A",
+    midpoint = 0, limits = c(-0.15, 0.15), oob = scales::squish
+  ) +
+  coord_equal() +
+  labs(
+    title    = "Paired BTVR test: anglemania vs HVG (dropout simulations)",
+    subtitle = "Fill = median Δ BTVR (angl − hvg); label = BH-corrected significance",
+    x = "Batch effect (batch.facLoc)", y = "Biological variability (de.facLoc)",
+    fill = "Δ BTVR"
+  ) +
+  theme_bw() +
+  theme(text = element_text(size = 14))
+
+p_sig_btvr
+ggsave(
+  file.path(outplot, glue("{today()}_stat_BTVR_significance_heatmap.pdf")),
+  p_sig_btvr, width = 8, height = 6
+)
+```
+
+```{r stat_btvr_by_sparsity_plot, fig.height=5}
+p_sparsity <- ggplot(diff_btvr, aes(x = factor(sparsity), y = delta_BTVR)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_boxplot(fill = "#64487A", alpha = 0.7, outlier.size = 0.5) +
+  geom_text(
+    data = stat_by_sparsity,
+    aes(x = factor(sparsity), y = max(diff_btvr$delta_BTVR, na.rm = TRUE) * 1.05, label = sig),
+    size = 5
+  ) +
+  labs(
+    title    = "BTVR advantage of anglemania by sparsity level",
+    subtitle = "Stars = BH-corrected Wilcoxon p-value (angl > hvg)",
+    x = "Sparsity [%]", y = "Δ median BTVR (angl − hvg)"
+  ) +
+  theme_bw() +
+  theme(text = element_text(size = 14))
+
+p_sparsity
+ggsave(
+  file.path(outplot, glue("{today()}_stat_BTVR_by_sparsity.pdf")),
+  p_sparsity, width = 8, height = 5
+)
+```
+
 # sessionInfo
 ```{r}
 sessionInfo()
