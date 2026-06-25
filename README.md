@@ -116,7 +116,7 @@ The combined metrics TSV has columns: `sample`, `integration_method`, `gene_sele
 
 ## Analysis Notebooks
 
-Notebooks are in `scripts/notebooks/` and generate HTML reports and plots under `output/plots/`.
+Notebooks are in `scripts/notebooks/`.
 
 | Notebook | Purpose |
 |----------|---------|
