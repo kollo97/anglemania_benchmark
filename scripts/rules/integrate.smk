@@ -1,7 +1,7 @@
 rule integrate:
     input:
         original_h5ad=lambda wildcards: file_paths[wildcards.sample],
-        feature_subset = rules.preprocess.output
+        feature_subset = PREPROCESS_OUTPUT
     output:
         embedding = join(out_embedding, "{sample}/{integration_method}/{sample}_{gene_selection}.tsv")
     params:

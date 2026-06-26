@@ -1,0 +1,2 @@
+sample_name	original_h5ad	batch.facLoc	de.facLoc	nbatch	ngroup	groupCells	nGenes	de.facScale	file_path
+batch.facLoc0.1_de.facLoc0.1_nbatch3_ngroup3_groupCells1000	/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/test_numcells/h5ad/batch.facLoc0.1_de.facLoc0.1_nbatch3_ngroup3_groupCells1000.h5ad	0.1	0.1	3	3	1000	10000	0.1	/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/test_numcells/h5ad/batch.facLoc0.1_de.facLoc0.1_nbatch3_ngroup3_groupCells1000.h5ad

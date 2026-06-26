@@ -12,6 +12,7 @@ batch_key: "Batch"
 label_key: "Group"
 anglemania_mode: "cosine"
 permutation_function: "sample"
+normalization_mode: "classical" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
 n_genes: 2000
 
 integration_methods: ["scvi", "scanorama"]

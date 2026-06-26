@@ -1,28 +1,53 @@
-rule preprocess:
+rule preprocess_cpu:
     input:
-        # file_path="/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/{sample}.h5ad"
         original_h5ad=lambda wildcards: file_paths[wildcards.sample]
-
     output:
-        outfile = join(
-                    out_preprocessed,
-                    f"{{sample}}_{{gene_selection}}.tsv"
-                )        
+        outfile = PREPROCESS_OUTPUT
+    wildcard_constraints:
+        gene_selection = "hvg|full|rand|topbtvr|bottombtvr"
     params:
         batch_key = config["batch_key"],
         anglemania_mode = config["anglemania_mode"],
         n_genes = config["n_genes"],
-        permutation_function = config["permutation_function"]
-    # log:
-    #     "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/snakemake_logs/preprocess/{sample}_{gene_selection}_log_test.txt"
+        permutation_function = config["permutation_function"],
+        normalization_mode = config["normalization_mode"]
     shell:
         """
-        Rscript pipeline_scripts/prepare_inputs.R \
+        conda run -n pyanglemania python3 pipeline_scripts/prepare_inputs.py \
             --infile {input.original_h5ad} \
             --outfile {output.outfile} \
             --batch_key {params.batch_key} \
             --gene_selection {wildcards.gene_selection} \
             --anglemania_mode {params.anglemania_mode} \
             --n_genes {params.n_genes} \
-            --permutation_function {params.permutation_function}
+            --permutation_function {params.permutation_function} \
+            --normalization_mode {params.normalization_mode}
+        """
+
+rule preprocess_gpu:
+    input:
+        original_h5ad=lambda wildcards: file_paths[wildcards.sample]
+    output:
+        outfile = PREPROCESS_OUTPUT
+    wildcard_constraints:
+        gene_selection = "angl"
+    params:
+        batch_key = config["batch_key"],
+        anglemania_mode = config["anglemania_mode"],
+        n_genes = config["n_genes"],
+        permutation_function = config["permutation_function"],
+        normalization_mode = config["normalization_mode"]
+    resources:
+        gpu = 1
+    shell:
+        """
+        conda run -n pyanglemania python3 pipeline_scripts/prepare_inputs.py \
+            --infile {input.original_h5ad} \
+            --outfile {output.outfile} \
+            --batch_key {params.batch_key} \
+            --gene_selection {wildcards.gene_selection} \
+            --anglemania_mode {params.anglemania_mode} \
+            --n_genes {params.n_genes} \
+            --permutation_function {params.permutation_function} \
+            --normalization_mode {params.normalization_mode}
         """

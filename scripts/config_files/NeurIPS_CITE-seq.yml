@@ -13,6 +13,7 @@ batch_key: "batch"
 label_key: "cell_type"
 anglemania_mode: "cosine"
 permutation_function: "sample"
+normalization_mode: "classical" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
 n_genes: 2000
 
 integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"

@@ -10,6 +10,11 @@ out_integration = join(config["output_dir"], config["out_integration"])
 out_metrics = join(config["output_dir"], config["out_metrics"])
 out_embedding = join(config["output_dir"], config["out_embedding"])
 
+# Shared output pattern for the preprocess rules (preprocess_cpu/preprocess_gpu in
+# rules/preprocess.smk both produce this same path, disambiguated at the DAG level
+# by their wildcard_constraints on gene_selection).
+PREPROCESS_OUTPUT = join(out_preprocessed, "{sample}_{gene_selection}.tsv")
+
 
 ############## INPUT #################
 # check if samplesheet is tsv or json
@@ -41,8 +46,8 @@ include: "rules/metrics.smk"
 rule all:
     input:
         # preprocess
-        expand(rules.preprocess.output, 
-               sample=SAMPLES, 
+        expand(PREPROCESS_OUTPUT,
+               sample=SAMPLES,
                gene_selection=GENE_SELECTIONS),
 
         # integrate

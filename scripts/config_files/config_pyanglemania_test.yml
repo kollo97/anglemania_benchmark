@@ -1,0 +1,29 @@
+name: pyanglemania_test
+
+# Single splatter-simulated dataset for smoke-testing the pyanglemania-based
+# preprocess rules: 3 batches, 3 groups, 1000 cells/group, de.facScale 0.1.
+samplesheet: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/samplesheet_pyanglemania_test.tsv"
+#specify output directory
+output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/pyanglemania_test/"
+# specify sub dir in output directory for outputs of the two separate rules
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+out_embedding: "embedding/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+permutation_function: "sample"
+normalization_mode: "classical" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
+n_genes: 2000
+
+integration_methods: ["scvi"] #"scanorama", 
+gene_selection: ["hvg", "angl"]
+gpu: True
+
+visualization:
+  preprocessed_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/pyanglemania_test/preprocessed/"
+  metrics_file: "/data/akalin/akollot/anglemania_benchmark/simulated/pyanglemania_test/metrics/pyanglemania_test_combined_metrics.tsv"
+  outplot_dir_bm_visualization: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/bm_simulated_visualization/pyanglemania_test/"
+  outplot_dir_compare_gene_selection: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/plots/compare_gene_selections/pyanglemania_test/"

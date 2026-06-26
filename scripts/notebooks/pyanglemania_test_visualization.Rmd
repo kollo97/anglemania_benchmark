@@ -1,0 +1,217 @@
+---
+title: "pyanglemania_test_visualization"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+
+---
+
+Smoke-test visualization for `config_pyanglemania_test.yml`: a single splatter-simulated
+sample (3 batches, 3 groups, 1000 cells/group, de.facScale 0.1). With only one sample,
+the per-condition heatmaps and paired Wilcoxon tests used in `bm_simulated_visualization.Rmd`
+/ `compare_gene_selections.Rmd` don't apply -- this just sanity-checks that `angl` and `hvg`
+produced sensible scores and gene sets for this one run.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 6)
+knitr::opts_chunk$set(fig.width = 8)
+```
+
+```{r, load libraries}
+.libPaths(.Library)
+library(tidyverse)
+library(yaml)
+library(rhdf5)
+library(scales)
+library(glue)
+```
+
+# Load config
+```{r}
+cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_pyanglemania_test.yml")
+```
+
+# Load metrics
+```{r}
+metrics_path <- cfg$visualization$metrics_file
+samplesheet_path <- cfg$samplesheet
+preprocessed_dir <- cfg$visualization$preprocessed_dir
+outplot_bm <- cfg$visualization$outplot_dir_bm_visualization
+outplot_cgs <- cfg$visualization$outplot_dir_compare_gene_selection
+for (d in c(outplot_bm, outplot_cgs)) {
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+}
+
+samplesheet <- read.delim(samplesheet_path)
+metrics <- read.delim(metrics_path) %>%
+  left_join(samplesheet %>% select(-original_h5ad), by = join_by(sample == sample_name)) %>%
+  mutate(
+    gene_selection = factor(gene_selection, levels = c("hvg", "angl")),
+    integration_method = factor(integration_method)
+  )
+metrics
+```
+
+# Integration scores: angl vs hvg
+```{r}
+p <- metrics %>%
+  select(gene_selection, integration_method, Total, Bio.conservation, Batch.correction) %>%
+  pivot_longer(cols = c(Total, Bio.conservation, Batch.correction), names_to = "score_type", values_to = "score") %>%
+  mutate(score_type = factor(score_type, levels = c("Total", "Bio.conservation", "Batch.correction"))) %>%
+  ggplot(aes(x = gene_selection, y = score, fill = gene_selection)) +
+  geom_col(position = "dodge", width = 0.6) +
+  geom_text(aes(label = round(score, 2)), vjust = -0.3) +
+  facet_grid(score_type ~ integration_method) +
+  scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+  ylim(0, 1) +
+  theme_bw() +
+  labs(title = cfg$name, x = NULL, y = "Score") +
+  theme(text = element_text(size = 14), legend.position = "none")
+p
+ggsave(file.path(outplot_bm, "scores_barplot.pdf"), p, width = 8, height = 8)
+```
+
+# Compare gene selections: angl vs hvg
+```{r}
+sample_name <- samplesheet$sample_name[1]
+angl_genes <- read.delim(file.path(preprocessed_dir, paste0(sample_name, "_angl.tsv"))) %>% pull(hgnc_symbol)
+hvg_genes  <- read.delim(file.path(preprocessed_dir, paste0(sample_name, "_hvg.tsv"))) %>% pull(hgnc_symbol)
+intersection <- intersect(angl_genes, hvg_genes)
+
+glue(
+  "angl: {length(angl_genes)} genes | hvg: {length(hvg_genes)} genes | ",
+  "intersection: {length(intersection)} ({round(100 * length(intersection) / length(angl_genes), 1)}% of angl)"
+)
+```
+
+## Compare against the original R `anglemania` implementation
+
+`pyanglemania` is a from-scratch GPU-capable Python port of the original R `anglemania`
+package. As a migration sanity-check, this runs the legacy R package directly on the exact
+same input file and parameters used above, and compares the resulting gene set against the
+Python (`angl`) selection above. No GPU is needed for the R implementation, but it is
+considerably slower than the Python port (~5 min vs ~1.5 min on this dataset on CPU) -- this
+chunk is the slow part of the notebook.
+
+```{r run_r_anglemania}
+suppressPackageStartupMessages({
+  library(anndataR)
+  library(anglemania)
+})
+
+ad_r <- anndataR::read_h5ad(samplesheet$file_path[1])
+sce <- ad_r$to_SingleCellExperiment()
+sce <- anglemania(
+  sce,
+  batch_key = cfg$batch_key,
+  dataset_key = NULL,
+  min_cells_per_gene = 1,
+  max_n_genes = cfg$n_genes,
+  method = cfg$anglemania_mode,
+  permutation_function = cfg$permutation_function
+)
+r_angl_genes <- get_anglemania_genes(sce)
+length(r_angl_genes)
+```
+
+```{r compare_r_vs_py}
+r_vs_py <- intersect(r_angl_genes, angl_genes)
+glue(
+  "R anglemania: {length(r_angl_genes)} genes | pyanglemania: {length(angl_genes)} genes | ",
+  "intersection: {length(r_vs_py)} ({round(100 * length(r_vs_py) / length(r_angl_genes), 1)}% agreement)"
+)
+```
+
+## Quantify overlap between all gene selections
+
+Pairwise and three-way overlap between `hvg`, the Python port (`angl`), and the original R
+implementation (`r_angl`).
+
+```{r overlap_table}
+gene_sets <- list(hvg = hvg_genes, angl = angl_genes, r_angl = r_angl_genes)
+
+pairwise_overlap <- combn(names(gene_sets), 2, function(pair) {
+  a <- gene_sets[[pair[1]]]
+  b <- gene_sets[[pair[2]]]
+  inter <- intersect(a, b)
+  tibble(
+    set_a = pair[1], set_b = pair[2],
+    n_a = length(a), n_b = length(b),
+    n_intersection = length(inter),
+    jaccard = length(inter) / length(union(a, b)),
+    pct_of_a = 100 * length(inter) / length(a),
+    pct_of_b = 100 * length(inter) / length(b)
+  )
+}, simplify = FALSE) %>% bind_rows()
+
+pairwise_overlap
+
+glue("Genes selected by all three methods: {length(Reduce(intersect, gene_sets))}")
+```
+
+```{r upset_plot, fig.width=8, fig.height=5}
+all_genes <- unique(unlist(gene_sets))
+binary_matrix <- sapply(gene_sets, function(s) all_genes %in% s)
+rownames(binary_matrix) <- all_genes
+
+comb_mat <- ComplexHeatmap::make_comb_mat(binary_matrix, mode = "distinct")
+ComplexHeatmap::UpSet(
+  comb_mat,
+  comb_order = order(ComplexHeatmap::comb_size(comb_mat), decreasing = TRUE),
+  comb_col = c("red", "blue", "black")[ComplexHeatmap::comb_degree(comb_mat)]
+)
+```
+
+## BTVR (Between-to-Total Variance Ratio) by gene selection
+* anglemania genes (R or Python) are expected to have a higher BTVR (more biological, less
+  technical variance) than HVGs, and the two anglemania implementations are expected to look
+  similar to each other.
+```{r}
+rowdata <- h5read(samplesheet$file_path[1], "/var") %>% as.data.frame() %>% column_to_rownames("X_index")
+h5closeAll()
+
+bio_var <- apply(dplyr::select(rowdata, starts_with("DEFacGroup")), 1, var)
+tech_var <- apply(dplyr::select(rowdata, starts_with("BatchFacBatch")), 1, var)
+
+btvr_base <- tibble(
+  gene = rownames(rowdata),
+  BTVR = rescale(log((bio_var + 1e-15) / (tech_var + 1e-15)))
+)
+
+# A gene can belong to more than one selection method, so each method's membership is
+# computed independently (a gene in both gets a row in each group) rather than via a single
+# case_when label, which would silently drop it from all but the first matching group.
+btvr <- purrr::imap_dfr(gene_sets, function(genes, name) {
+  btvr_base %>% filter(gene %in% genes) %>% mutate(gene_selection = name)
+}) %>%
+  mutate(gene_selection = factor(gene_selection, levels = c("hvg", "angl", "r_angl")))
+
+p <- btvr %>%
+  ggplot(aes(x = gene_selection, y = BTVR, fill = gene_selection)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15, fill = "white", outlier.shape = NA) +
+  scale_fill_manual(values = c("angl" = "#64487A", "r_angl" = "#A67DB8", "hvg" = "grey")) +
+  ylim(0, 1) +
+  theme_bw() +
+  labs(title = glue("{cfg$name}: BTVR by gene selection"), x = NULL) +
+  theme(text = element_text(size = 14), legend.position = "none")
+p
+ggsave(file.path(outplot_cgs, "BTVR_violin.pdf"), p, width = 7, height = 5)
+
+btvr %>%
+  group_by(gene_selection) %>%
+  summarise(mean_BTVR = mean(BTVR), median_BTVR = median(BTVR), n = n())
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```
