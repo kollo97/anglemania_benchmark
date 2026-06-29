@@ -75,35 +75,26 @@ calculate_ldfDiff <- function(
     set.seed(1)
     n_dim <- ncol(SingleCellExperiment::reducedDim(integrated_sce, "emb"))
 
-    message("Calculating batch PCAs...")
     batches <- sort(unique(original_sce[[batch_key]]))
     batch_objects <- lapply(batches, function(.batch) {
-        message("Batch '", .batch, "'...")
         batch_sce <- original_sce[, original_sce[[batch_key]] == .batch]
-        batch_sce <- scuttle::logNormCounts(batch_sce)
-        batch_sce <- scater::runPCA(
+        batch_sce <- suppressMessages(scuttle::logNormCounts(batch_sce))
+        batch_sce <- suppressMessages(scater::runPCA(
             batch_sce,
             exprs_values = "logcounts",
             ncomponents = n_dim,
             name = "pca"
-        )
+        ))
     })
     names(batch_objects) <- batches
 
     # Use k=75 unless one of the batches is smaller than that
     # (should only happen for the test dataset)
     k <- min(sapply(batch_objects, ncol)) - 1
-    if (k < 75) {
-        warning(
-            "k was set to ",
-            k,
-            " because one of the batches has fewer than 76 cells"
-        )
-    } else {
+    if (k >= 75) {
         k <- 75
     }
-    message("Calculating cell ldfDiff scores...")
-    integrated_sce <- CellMixS::ldfDiff(
+    integrated_sce <- suppressMessages(CellMixS::ldfDiff(
         sce_pre_list = batch_objects,
         sce_combined = integrated_sce,
         group = batch_key,
@@ -111,17 +102,11 @@ calculate_ldfDiff <- function(
         dim_red = "pca",
         dim_combined = "emb",
         n_dim = n_dim
-    )
+    ))
 
-    message("Calculating final ldfDiff score...")
     # Scores closer to 0 are better so use absolute values
     scores <- abs(SummarizedExperiment::colData(integrated_sce)$diff_ldf)
     if (any(is.na(scores))) {
-        message(
-            "Warning: Ignoring ",
-            sum(is.na(scores)),
-            " cells with NA ldfDiff scores"
-        )
         scores <- scores[!is.na(scores)]
     }
     # Score are unbounded so we set any scores greater than 1 to 1
@@ -168,7 +153,6 @@ metrics <- data.frame(
     integration_method = args$integration_method,
     gene_selection = args$gene_selection
 )
-message("Writing metrics to ", args$outfile)
 write.table(
     metrics,
     file = args$outfile,

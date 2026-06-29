@@ -68,26 +68,17 @@ calculate_cms <- function(
     batch_key
 ) {
     set.seed(1)
-    message("Calculating CMS...")
-
     k <- min(200, ncol(integrated_sce) - 1L)
-    integrated_sce <- CellMixS::cms(
+    integrated_sce <- suppressMessages(CellMixS::cms(
         integrated_sce,
         k = k,
         group = batch_key,
         dim_red = "emb",
         n_dim = ncol(SingleCellExperiment::reducedDim(integrated_sce, "emb"))
-    )
+    ))
 
     cms_scores <- SummarizedExperiment::colData(integrated_sce)$cms
-    if (any(is.na(cms_scores))) {
-        message("Ignoring ", sum(is.na(cms_scores)), " cells with NA CMS scores")
-    }
-
-    # Higher is better
-    message("Calculating final CMS score...")
     score <- 1 - mean(cms_scores < 0.1, na.rm = TRUE)
-    message("Finished calculating final CMS score: ", score)
     return(score)
 }
 
@@ -125,7 +116,6 @@ metrics <- data.frame(
     integration_method = args$integration_method,
     gene_selection = args$gene_selection
 )
-message("Writing metrics to ", args$outfile)
 write.table(
     metrics,
     file = args$outfile,
