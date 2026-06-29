@@ -73,28 +73,28 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
         # https://www.sc-best-practices.org/cellular_structure/integration.html#variational-autoencoder-vae-based-integration
         # max_epochs_scvi = np.min([round((20000 / adata.n_obs) * 400), 1000])
         max_epochs_scvi = 1000
-        
+
         click.secho("Training SCVI model...", fg="bright_yellow", err=True)
         model = scvi.model.SCVI(adata)
-        model.train()
+        model.train(accelerator="gpu", devices=1)
         adata.obsm["X_emb"] = model.get_latent_representation()
-    
+
     elif integration_method == "scanvi":
         click.secho("Setting up SCVI model...", fg="bright_yellow", err=True)
         scvi.model.SCVI.setup_anndata(adata, layer="counts", batch_key=batch_key)
         max_epochs_scvi = np.min([round((20000 / adata.n_obs) * 400), 400])
-        
+
         click.secho("Training SCVI model...", fg="bright_yellow", err=True)
         model = scvi.model.SCVI(adata)
-        model.train()
+        model.train(accelerator="gpu", devices=1)
         adata.obsm["X_emb"] = model.get_latent_representation()
         max_epochs_scanvi = int(np.min([10, np.max([2, round(max_epochs_scvi / 3.0)])]))
-        
+
         click.secho("Setting up SCANVI model...", fg="bright_yellow", err=True)
         model = scvi.model.SCANVI.from_scvi_model(model, labels_key=label_key, unlabeled_category="unlabelled")
-        
+
         click.secho("Training SCANVI model...", fg="bright_yellow", err=True)
-        model.train(max_epochs=max_epochs_scanvi)
+        model.train(max_epochs=max_epochs_scanvi, accelerator="gpu", devices=1)
         adata.obsm["X_emb"] = model.get_latent_representation()
     elif integration_method == "scanorama":
         click.secho("Setting up SCANORAMA model...", fg="bright_yellow", err=True)

@@ -13,7 +13,6 @@ rule integrate:
         gpu=lambda wildcards: 1 if wildcards.integration_method in ["scvi", "scanvi"] else 0
     shell:
         """
-        export JAX_PLATFORMS=cpu
         if [[ "{wildcards.integration_method}" = "harmony" || "{wildcards.integration_method}" = "scvi" || "{wildcards.integration_method}" = "scanvi" || "{wildcards.integration_method}" = "scanorama" ]]; then
             python3 pipeline_scripts/integration.py \
                 --infile={input.original_h5ad} \
