@@ -76,7 +76,7 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
 
         click.secho("Training SCVI model...", fg="bright_yellow", err=True)
         model = scvi.model.SCVI(adata)
-        model.train(accelerator="gpu", devices=1)
+        model.train()
         adata.obsm["X_emb"] = model.get_latent_representation()
 
     elif integration_method == "scanvi":
@@ -86,7 +86,7 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
 
         click.secho("Training SCVI model...", fg="bright_yellow", err=True)
         model = scvi.model.SCVI(adata)
-        model.train(accelerator="gpu", devices=1)
+        model.train()
         adata.obsm["X_emb"] = model.get_latent_representation()
         max_epochs_scanvi = int(np.min([10, np.max([2, round(max_epochs_scvi / 3.0)])]))
 
@@ -94,7 +94,7 @@ def integrate(infile, outfile, integration_method, batch_key, label_key=None, fe
         model = scvi.model.SCANVI.from_scvi_model(model, labels_key=label_key, unlabeled_category="unlabelled")
 
         click.secho("Training SCANVI model...", fg="bright_yellow", err=True)
-        model.train(max_epochs=max_epochs_scanvi, accelerator="gpu", devices=1)
+        model.train(max_epochs=max_epochs_scanvi)
         adata.obsm["X_emb"] = model.get_latent_representation()
     elif integration_method == "scanorama":
         click.secho("Setting up SCANORAMA model...", fg="bright_yellow", err=True)
