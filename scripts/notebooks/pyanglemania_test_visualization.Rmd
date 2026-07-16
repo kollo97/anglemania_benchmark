@@ -37,6 +37,7 @@ library(glue)
 # Load config
 ```{r}
 cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_pyanglemania_test.yml")
+r_era_cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_varying_batch_biovar_facScale0.1.yml")
 ```
 
 # Load metrics
@@ -58,11 +59,23 @@ metrics <- read.delim(metrics_path) %>%
     integration_method = factor(integration_method)
   )
 metrics
+
+r_era_sample <- "batch.facLoc0.1_de.facLoc0.1_nbatch4_ngroup5_groupCells1000"
+r_era_metrics <- read.delim(r_era_cfg$visualization$metrics_file) %>%
+  filter(sample == r_era_sample, gene_selection == "angl") %>%
+  mutate(gene_selection = "r_angl")
+
+metrics_extended <- bind_rows(metrics, r_era_metrics) %>%
+  mutate(
+    gene_selection = factor(gene_selection, levels = c("hvg", "angl", "r_angl")),
+    integration_method = factor(integration_method)
+  )
+metrics_extended
 ```
 
-# Integration scores: angl vs hvg
+# Integration scores: angl vs hvg vs r_angl
 ```{r}
-p <- metrics %>%
+p <- metrics_extended %>%
   select(gene_selection, integration_method, Total, Bio.conservation, Batch.correction) %>%
   pivot_longer(cols = c(Total, Bio.conservation, Batch.correction), names_to = "score_type", values_to = "score") %>%
   mutate(score_type = factor(score_type, levels = c("Total", "Bio.conservation", "Batch.correction"))) %>%
@@ -70,13 +83,34 @@ p <- metrics %>%
   geom_col(position = "dodge", width = 0.6) +
   geom_text(aes(label = round(score, 2)), vjust = -0.3) +
   facet_grid(score_type ~ integration_method) +
-  scale_fill_manual(values = c("angl" = "#64487A", "hvg" = "grey")) +
+  scale_fill_manual(values = c("angl" = "#64487A", "r_angl" = "#A67DB8", "hvg" = "grey")) +
   ylim(0, 1) +
   theme_bw() +
   labs(title = cfg$name, x = NULL, y = "Score") +
   theme(text = element_text(size = 14), legend.position = "none")
 p
 ggsave(file.path(outplot_bm, "scores_barplot.pdf"), p, width = 8, height = 8)
+```
+
+## Individual metrics
+```{r individual_metrics_dotplot, fig.width=10, fig.height=10}
+bio_metrics   <- c("Silhouette.label", "Isolated.labels", "bNMI", "cLISI", "ldfDiff")
+batch_metrics <- c("PCR.comparison", "iLISI", "cms", "BRAS")
+
+p_dots <- metrics_extended %>%
+  select(-any_of(c("Total", "Bio.conservation", "Batch.correction"))) %>%
+  pivot_longer(cols = where(is.numeric), names_to = "metric", values_to = "value") %>%
+  mutate(metric = factor(metric, levels = c(bio_metrics, batch_metrics))) %>%
+  ggplot(aes(x = gene_selection, y = value, color = gene_selection)) +
+  geom_point(size = 4) +
+  facet_grid(metric ~ integration_method, scales = "free_y") +
+  scale_color_manual(values = c("angl" = "#64487A", "r_angl" = "#A67DB8", "hvg" = "grey40")) +
+  theme_bw() +
+  labs(title = cfg$name, x = NULL, y = "Score") +
+  theme(text = element_text(size = 12), legend.position = "none",
+        strip.text.y = element_text(angle = 0))
+p_dots
+ggsave(file.path(outplot_bm, "individual_metrics_dotplot.pdf"), p_dots, width = 10, height = 10)
 ```
 
 # Compare gene selections: angl vs hvg
@@ -94,39 +128,31 @@ glue(
 
 ## Compare against the original R `anglemania` implementation
 
-`pyanglemania` is a from-scratch GPU-capable Python port of the original R `anglemania`
-package. As a migration sanity-check, this runs the legacy R package directly on the exact
-same input file and parameters used above, and compares the resulting gene set against the
-Python (`angl`) selection above. No GPU is needed for the R implementation, but it is
-considerably slower than the Python port (~5 min vs ~1.5 min on this dataset on CPU) -- this
-chunk is the slow part of the notebook.
+`pyanglemania` is a GPU-accelerated Python port of the original R `anglemania` package.
+As a migration sanity-check, we compare its gene selection against R-era results from a
+previous benchmark run (`facScale0.1 / groupCells1000`). The test sample used above
+(nbatch=3, ngroup=3) was not included in that earlier run; the closest available sample
+with the same simulation parameters (batch.facLoc=0.1, de.facLoc=0.1) is
+`nbatch4_ngroup5_groupCells1000`, which is used here. Because the two datasets are
+independent splatter simulations, the overlap quantifies method reproducibility across
+similar conditions, not same-dataset agreement.
 
-```{r run_r_anglemania}
-suppressPackageStartupMessages({
-  library(anndataR)
-  library(anglemania)
-})
+```{r load_r_era_genes}
+r_era_preprocessed_dir <- r_era_cfg$visualization$preprocessed_dir
 
-ad_r <- anndataR::read_h5ad(samplesheet$file_path[1])
-sce <- ad_r$to_SingleCellExperiment()
-sce <- anglemania(
-  sce,
-  batch_key = cfg$batch_key,
-  dataset_key = NULL,
-  min_cells_per_gene = 1,
-  max_n_genes = cfg$n_genes,
-  method = cfg$anglemania_mode,
-  permutation_function = cfg$permutation_function
-)
-r_angl_genes <- get_anglemania_genes(sce)
-length(r_angl_genes)
+r_angl_genes <- read.delim(
+  file.path(r_era_preprocessed_dir, paste0(r_era_sample, "_angl.tsv"))
+) %>% pull(hgnc_symbol)
+
+glue("R-era anglemania ({r_era_sample}): {length(r_angl_genes)} genes")
 ```
 
 ```{r compare_r_vs_py}
 r_vs_py <- intersect(r_angl_genes, angl_genes)
 glue(
-  "R anglemania: {length(r_angl_genes)} genes | pyanglemania: {length(angl_genes)} genes | ",
-  "intersection: {length(r_vs_py)} ({round(100 * length(r_vs_py) / length(r_angl_genes), 1)}% agreement)"
+  "R anglemania (nbatch2/ngroup2): {length(r_angl_genes)} genes | ",
+  "pyanglemania (nbatch3/ngroup3): {length(angl_genes)} genes | ",
+  "intersection: {length(r_vs_py)} ({round(100 * length(r_vs_py) / length(r_angl_genes), 1)}% of R genes also selected by Python)"
 )
 ```
 
@@ -209,6 +235,35 @@ ggsave(file.path(outplot_cgs, "BTVR_violin.pdf"), p, width = 7, height = 5)
 btvr %>%
   group_by(gene_selection) %>%
   summarise(mean_BTVR = mean(BTVR), median_BTVR = median(BTVR), n = n())
+```
+
+## BTVR: full gene distribution with selection-group landmarks
+```{r btvr_full_distribution, fig.width=8, fig.height=5}
+btvr_summary <- btvr %>%
+  group_by(gene_selection) %>%
+  summarise(mean_BTVR = mean(BTVR), median_BTVR = median(BTVR))
+
+p_dist <- btvr_base %>%
+  ggplot(aes(x = BTVR)) +
+  geom_histogram(bins = 60, fill = "lightgrey", color = "white") +
+  geom_vline(data = btvr_summary,
+             aes(xintercept = median_BTVR, color = gene_selection, linetype = "median"),
+             linewidth = 1) +
+  geom_vline(data = btvr_summary,
+             aes(xintercept = mean_BTVR, color = gene_selection, linetype = "mean"),
+             linewidth = 1) +
+  scale_color_manual(values = c("angl" = "#64487A", "r_angl" = "#A67DB8", "hvg" = "grey40")) +
+  scale_linetype_manual(values = c("median" = "solid", "mean" = "dashed")) +
+  theme_bw() +
+  labs(
+    title = glue("{cfg$name}: BTVR distribution (all genes)"),
+    subtitle = "Solid = median, dashed = mean per gene selection",
+    x = "BTVR (rescaled log bio/tech variance ratio)", y = "Count",
+    color = "Gene selection", linetype = NULL
+  ) +
+  theme(text = element_text(size = 13))
+p_dist
+ggsave(file.path(outplot_cgs, "BTVR_full_distribution.pdf"), p_dist, width = 8, height = 5)
 ```
 
 # Session Info

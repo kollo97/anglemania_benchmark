@@ -2,7 +2,7 @@ name: LueckenTheisBenchmark
 
 samplesheet: "/local/Projects/AAkalin_Neuroblastoma/data/Luecken_Theis_NatMethods_2021_benchmarking/datasets/samplesheet.tsv"
 #specify output directory
-output_dir: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021"
+output_dir: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021/pyanglemania"
 # specify sub dir in output directory for outputs of the two separate rules
 out_preprocessed: "preprocessed/"
 out_integration: "integration/"
@@ -11,14 +11,14 @@ out_embedding: "embedding/"
 
 batch_key: "batch"
 label_key: "celltype"
-anglemania_mode: "cosine"
+anglemania_mode: "phi_s" #"cosine", "spearman", "phi_s"
 permutation_function: "sample"
-normalization_mode: "classical" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
+normalization_mode: "pflog1ppf" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
 n_genes: 2000
 
-integration_methods: ["scanorama", "scvi"] # "seurat", "scanvi", "harmony"
-gene_selection: [ "hvg", "angl"] #"full", "rand", 
-gpu: False
+integration_methods: ["scvi"] #"scanorama",
+gene_selection: ["hvg", "angl"] #"full", "rand",
+gpu: True
 
 
 visualization:

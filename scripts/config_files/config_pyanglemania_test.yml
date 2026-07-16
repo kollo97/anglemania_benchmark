@@ -13,9 +13,9 @@ out_embedding: "embedding/"
 
 batch_key: "Batch"
 label_key: "Group"
-anglemania_mode: "cosine"
+anglemania_mode: "phi_s" #"cosine", "spearman", "phi_s"
 permutation_function: "sample"
-normalization_mode: "classical" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
+normalization_mode: "pflog1ppf" # "classical" (CP10K + log1p) | "pflog1ppf" (shifted-CLR)
 n_genes: 2000
 
 integration_methods: ["scvi"] #"scanorama", 

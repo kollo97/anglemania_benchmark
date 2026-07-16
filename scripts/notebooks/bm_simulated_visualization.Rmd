@@ -21,7 +21,7 @@ knitr::opts_chunk$set(fig.width = 14)
 ```
 
 ```{r}
-.libPaths(.Library)
+# .libPaths(.Library)
 library(tidyverse)
 library(Seurat)
 library(anndataR)
@@ -33,7 +33,7 @@ library(yaml)
 
 # Load config
 ```{r}
-cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_varying_batch_biovar_facScale0.1.yml")
+cfg <- read_yaml("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/config_varying_batch_biovar_facScale0.1_pyanglemania.yml")
 ```
 
 # Load metrics
