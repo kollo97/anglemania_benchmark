@@ -23,6 +23,8 @@ bm_guix
 guix time-machine -C guix/channels.scm -- shell -m guix/manifest.scm --no-grafts python-numpyro
 ```
 
+Gene selection (`prepare_inputs.py`) instead runs in a dedicated `pyanglemania` conda environment (GPU-accelerated gene selection, `~/projects/pyanglemania/envs/pyanglemania.yml`), invoked from the Snakemake rules via `conda run -n pyanglemania`.
+
 ## Usage
 
 All pipeline commands run from the `scripts/` directory:
@@ -62,8 +64,9 @@ batch_key: Batch                        # obs column for batch labels
 label_key: Group                        # obs column for cell type labels
 integration_methods: [scvi, scanorama]
 gene_selection: [hvg, angl]
-anglemania_mode: cosine                 # cosine | spearman | diem
+anglemania_mode: cosine                 # cosine | spearman | phi_s
 permutation_function: sample            # sample | permute_nonzero
+normalization_mode: classical           # classical (CP10K + log1p) | pflog1ppf (shifted-CLR, angl only)
 n_genes: 2000
 ```
 
@@ -74,7 +77,7 @@ Input .h5ad files
        │
        ▼
 ┌─────────────────────┐
-│  1. Preprocess      │  prepare_inputs.R
+│  1. Preprocess      │  prepare_inputs.py (preprocess_cpu / preprocess_gpu)
 │  Gene selection     │  → {sample}_{gene_selection}.tsv
 └─────────────────────┘
        │
@@ -131,10 +134,11 @@ Notebooks are in `scripts/notebooks/`.
 
 ## Key Dependencies
 
-- [anglemania](https://github.com/omnideconv/anglemania) — the gene selection method being benchmarked
+- [pyanglemania](https://github.com/omnideconv/pyanglemania) — GPU-accelerated Python port of anglemania, the gene selection method being benchmarked
+- [scanpy](https://scanpy.readthedocs.io/) — `seurat` (dispersion-based) batch-aware HVG selection
 - [scib-metrics](https://github.com/YosefLab/scib-metrics) — batch integration benchmarking metrics
 - [scvi-tools](https://github.com/scverse/scvi-tools) — scVI/scANVI integration
 - [CellMixS](https://bioconductor.org/packages/CellMixS/) — CMS and ldfDiff metrics
 - [balanced-clustering](https://github.com/scverse/balanced-clustering) — balanced NMI
-- [Seurat v5](https://satijalab.org/seurat/) — HVG selection and integration
+- [Seurat v5](https://satijalab.org/seurat/) — Seurat-based integration method
 - [Snakemake](https://snakemake.readthedocs.io/) — workflow management

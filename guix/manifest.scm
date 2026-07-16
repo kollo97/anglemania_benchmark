@@ -362,6 +362,70 @@
        "Balanced Clustering provides clustering metrics and tools that work well with imbalanced datasets.")
       (license license:gpl3))))
 
+;; Snakemake SLURM executor plugins.
+;; Note: the Guix-channel versions of snakemake-interface-common (1.17.4) and
+;; snakemake-interface-executor-plugins (9.3.3) are slightly older than what
+;; these plugins declare as minimum requirements (>=1.21.0 / >=9.3.9).  The
+;; interfaces are provided at runtime by the snakemake wrapper's GUIX_PYTHONPATH,
+;; so we do not re-propagate them here to avoid profile collisions.  The
+;; minor-version gap is unlikely to cause API incompatibilities in practice.
+(define-public python-snakemake-executor-plugin-slurm-jobstep
+  (package
+    (name "python-snakemake-executor-plugin-slurm-jobstep")
+    (version "0.6.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (pypi-uri "snakemake_executor_plugin_slurm_jobstep" version))
+       (sha256
+        (base32 "1svziw7fqbcmbq6ykv7d6cbiagqx2c7rkd36vhslzmnii2mgxlhf"))))
+    (build-system pyproject-build-system)
+    (arguments
+     '(#:tests? #f
+       #:phases
+       (modify-phases %standard-phases
+         (delete 'sanity-check))))
+    (native-inputs (map specification->package
+                        (list "python-poetry-core")))
+    (home-page "https://github.com/snakemake/snakemake-executor-plugin-slurm-jobstep")
+    (synopsis "Snakemake executor plugin for srun steps inside SLURM jobs")
+    (description
+     "A Snakemake executor plugin for running srun job steps inside of SLURM jobs.")
+    (license license:expat)))
+
+(define-public python-snakemake-executor-plugin-slurm
+  (package
+    (name "python-snakemake-executor-plugin-slurm")
+    (version "2.6.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (pypi-uri "snakemake_executor_plugin_slurm" version))
+       (sha256
+        (base32 "1g6psis4grk2jx1rl3vksd95mcchm9pz8dp8wib4j3scbl197v1z"))))
+    (build-system pyproject-build-system)
+    (arguments
+     '(#:tests? #f
+       #:phases
+       (modify-phases %standard-phases
+         (delete 'sanity-check))))
+    (native-inputs (map specification->package
+                        (list "python-poetry-core")))
+    (propagated-inputs
+     (cons* python-snakemake-executor-plugin-slurm-jobstep
+            (map specification->package
+                 (list "python-pandas"
+                       "python-numpy"
+                       "python-throttler"
+                       "python-pyyaml"))))
+    (home-page "https://github.com/snakemake/snakemake-executor-plugin-slurm")
+    (synopsis "Snakemake executor plugin for SLURM clusters")
+    (description
+     "A Snakemake executor plugin for submitting jobs to a SLURM cluster.")
+    (license license:expat)))
+
+
+
 (define python-stuff
   (list "python"
         "python-matplotlib"
@@ -455,6 +519,8 @@
         r-anglemania
         python-balanced-clustering
         r-gtes
+        python-snakemake-executor-plugin-slurm
+        python-snakemake-executor-plugin-slurm-jobstep
         (map specification->package
              (append python-stuff
                      r-stuff

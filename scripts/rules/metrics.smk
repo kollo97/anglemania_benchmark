@@ -8,9 +8,10 @@ rule scib_metrics:
         out_metrics = out_metrics,
         batch_key = config["batch_key"],
         label_key = config["label_key"]
-    # resources:
-    #     # Dynamically assign GPU resource based on integration method
-    #     gpu=lambda wildcards: 1 if wildcards.integration_method in ["scvi", "scanvi"] else 0
+    resources:
+        cpus_per_task = 4,
+        mem_mb = 16000,
+        runtime = 180,
     shell:
         """
         python3 pipeline_scripts/metrics-scib_metrics.py \
@@ -33,6 +34,10 @@ rule bnmi:
     params:
         out_metrics = out_metrics,
         label_key = config["label_key"]
+    resources:
+        cpus_per_task = 2,
+        mem_mb = 16000,
+        runtime = 180,
     shell:
         """
         python3 pipeline_scripts/metrics-bNMI.py \
@@ -54,6 +59,10 @@ rule cms:
     params:
         out_metrics = out_metrics,
         batch_key = config["batch_key"]
+    resources:
+        cpus_per_task = 2,
+        mem_mb = 16000,
+        runtime = 180,
     shell:
         """
         Rscript pipeline_scripts/metrics-cms.R \
@@ -76,6 +85,10 @@ rule ldfdiff:
         out_metrics = out_metrics,
         batch_key = config["batch_key"],
         label_key = config["label_key"]
+    resources:
+        cpus_per_task = 2,
+        mem_mb = 16000,
+        runtime = 180,
     shell:
         """
         Rscript pipeline_scripts/metrics-ldfDiff.R \
@@ -97,6 +110,10 @@ rule combine:
         ldfdiff = expand(rules.ldfdiff.output, sample=SAMPLES, integration_method=INTEGRATION_METHODS, gene_selection=GENE_SELECTIONS)
     output:
         combined = join(out_metrics, config["name"] + "_combined_metrics.tsv")
+    resources:
+        cpus_per_task = 2,
+        mem_mb = 8000,
+        runtime = 180,
     shell:
         """
         python3 pipeline_scripts/combine_metrics.py \

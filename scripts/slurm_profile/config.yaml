@@ -1,0 +1,40 @@
+# Snakemake SLURM profile — uses snakemake-executor-plugin-slurm (native)
+# Run from scripts/ with: snakemake -s Snakefile.smk --configfile config_files/<cfg>.yml --profile slurm_profile/
+#
+# Resource keys used in rules:
+#   cpus_per_task  → sbatch --cpus-per-task
+#   mem_mb         → sbatch --mem (MB)
+#   runtime        → sbatch --time (integer minutes)
+#   gres           → sbatch --gres  (GPU rules use gres="gpu:1")
+#   gpu_slots      → NOT an sbatch flag. A plain Snakemake-local resource pool
+#                    (capped below) that throttles how many gres="gpu:1" jobs
+#                    Snakemake will submit at once, pipeline-wide.
+#
+# Do NOT use slurm_extra for GPU requests — it causes a threading deadlock in the
+# executor when multiple GPU jobs submit simultaneously. Use gres="gpu:1" instead.
+# Do NOT use gpu=N resources — the executor converts them to --gpu=N which is
+# ambiguous in this SLURM version (exit 255). That's why concurrency is capped
+# via the differently-named gpu_slots resource instead.
+#
+# The native slurm executor inherits the full shell environment (including the
+# Guix PATH), so run Snakemake from inside the bm_guix shell.
+
+executor: slurm
+
+default-resources:
+  - cpus_per_task=4
+  - mem_mb=16000
+  - runtime=60
+
+# Global resource caps: never exceed 30 CPUs, and never run more than 1
+# gres="gpu:1" job (preprocess_gpu / integrate scvi+scanvi) concurrently —
+# raise gpu_slots if more GPUs should be used in parallel.
+resources:
+  - cpus_per_task=30
+  - gpu_slots=1
+
+# Max concurrent SLURM submissions (resource caps above are the real throttle).
+jobs: 20
+
+latency-wait: 60
+printshellcmds: true

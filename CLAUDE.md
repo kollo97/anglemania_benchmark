@@ -21,8 +21,10 @@ The Guix environment spec is in `guix/channels.scm` and `guix/manifest.scm`.
 A conda environment (`angl_BM2`) is also defined in `envs/env.yml` as an alternative, with additional R packages that must be installed manually:
 - `kBET`: `devtools::install_github("theislab/kBET")`
 - `schard`: `devtools::install_github("cellgeni/schard")`
-- `anglemania` R package (the package being benchmarked)
+- `anglemania` R package (the legacy R implementation, superseded by `pyanglemania` for gene selection)
 - `CellMixS`, `balanced_clustering` Python package
+
+Gene selection (`scripts/pipeline_scripts/prepare_inputs.py`) runs in a separate **`pyanglemania` conda environment**, not in the Guix environment, because it depends on the GPU-accelerated [`pyanglemania`](https://github.com/omnideconv/pyanglemania) package (`~/projects/pyanglemania`, env spec at `~/projects/pyanglemania/envs/pyanglemania.yml`) and on `scikit-misc` (only needed if `hvg` is switched to scanpy's `seurat_v3` flavor; not used by the current `seurat` flavor, kept installed for that option). Sync it with `mamba env update -f ~/projects/pyanglemania/envs/pyanglemania.yml`. The Snakemake rules invoke it via `conda run -n pyanglemania`, so `snakemake` itself still runs from `bm_guix`.
 
 ## Running the Pipeline
 
@@ -37,9 +39,66 @@ snakemake -s Snakefile.smk --configfile config_files/<config>.yml -n
 # Run pipeline (local)
 snakemake -s Snakefile.smk --configfile config_files/<config>.yml --cores <N>
 
-# Run with SLURM
-snakemake -s Snakefile.smk --configfile config_files/<config>.yml --cluster "sbatch ..."
+# Run with SLURM (preferred — each rule becomes a separate SLURM job)
+snakemake -s Snakefile.smk --configfile config_files/<config>.yml --profile slurm_profile/
 ```
+
+### SLURM execution details
+
+The SLURM profile is at `scripts/slurm_profile/config.yaml`. It translates each
+rule's `resources` block into `sbatch` flags. Resource defaults:
+
+| Resource      | Default | Notes                                          |
+|---------------|---------|------------------------------------------------|
+| `cpus_per_task` | 4     | `--cpus-per-task`                              |
+| `mem_mb`      | 16 000  | `--mem` in MB                                  |
+| `runtime`     | 60      | `--time` in minutes                            |
+| `gres`        | —       | `--gres`; GPU rules use `gres="gpu:1"`         |
+| `gpu_slots`   | —       | not an sbatch flag; local Snakemake resource pool (see below) |
+
+GPU rules (`preprocess_gpu`, `integrate` with scvi/scanvi) set
+`gres="gpu:1"`. If your cluster routes GPU jobs through a dedicated
+partition, also add `partition="gpu"` (or equivalent) to those rules.
+
+**Important:** Do NOT add `gpu=N` to a rule's `resources` block. The native
+SLURM executor plugin converts any resource named `gpu` into `--gpu=N` as an
+sbatch flag, which this SLURM version rejects as ambiguous (exit 255) and
+causes the job to fail silently. Do NOT use `slurm_extra="--gres=gpu:1"` —
+when multiple GPU jobs submit simultaneously, the `slurm_extra` code path in
+the executor deadlocks (all submission threads wait on the same mutex). Use
+`gres="gpu:1"` instead; SLURM's scheduler handles concurrent GPU allocation.
+
+GPU rules also set `gpu_slots=1`, and `slurm_profile/config.yaml` caps the
+global `gpu_slots` pool at 1 (`resources: [gpu_slots=1]`). Since `gres` isn't
+a resource Snakemake itself schedules on (it's only translated into an sbatch
+flag), without this Snakemake will submit as many `gres="gpu:1"` jobs at once
+as `jobs:` allows, and SLURM's own scheduler ends up handing out however many
+GPUs are actually free on the cluster concurrently. `gpu_slots` is a plain,
+arbitrarily-named Snakemake-local resource (not recognized by the SLURM
+executor, so it's never turned into an sbatch flag) that throttles how many
+`gres="gpu:1"` jobs Snakemake will have in flight pipeline-wide at once. Raise
+the `gpu_slots` cap in `slurm_profile/config.yaml` to allow more concurrent
+GPU jobs.
+
+SLURM logs go to `scripts/logs/slurm/` (created automatically on pipeline start).
+
+**Prerequisite (one-time setup):**
+
+1. Install the plugin using Python 3.11 (the version Guix snakemake uses):
+```bash
+python3 -m pip install --user snakemake-executor-plugin-cluster-generic
+```
+
+2. Add this line to `~/.bashrc` so the plugin is on Guix's Python path:
+```bash
+export GUIX_PYTHONPATH="$HOME/.local/lib/python3.11/site-packages${GUIX_PYTHONPATH:+:$GUIX_PYTHONPATH}"
+```
+The Guix snakemake wrapper appends the existing `$GUIX_PYTHONPATH` to its store paths,
+so this makes the plugin visible inside the Guix shell without breaking anything.
+
+**Important:** run Snakemake from inside `bm_guix` so that the Guix python/R
+binaries are on PATH — the profile passes `--export=ALL` to sbatch, so each
+submitted job inherits the full Guix environment.
 
 Config files for different experiments are in `scripts/config_files/`. Key config parameters:
 - `samplesheet`: TSV/CSV/JSON file with `sample_name` and `file_path` columns (pointing to `.h5ad` files)
@@ -47,8 +106,9 @@ Config files for different experiments are in `scripts/config_files/`. Key confi
 - `integration_methods`: currently only `["scvi", "scanorama"]` are used
 - `gene_selection`: currently only `["hvg", "angl"]` are compared (anglemania vs HVG)
 - `batch_key` / `label_key`: column names in `.obs` metadata
-- `anglemania_mode`: `"cosine"` | `"spearman"` | `"diem"`
+- `anglemania_mode`: `"cosine"` | `"spearman"` | `"phi_s"`
 - `permutation_function`: `"sample"` | `"permute_nonzero"`
+- `normalization_mode`: `"classical"` (CP10K + log1p) | `"pflog1ppf"` (shifted-CLR). Only affects `angl` (passed through to pyanglemania's `normalization_method`). `hvg` always normalizes with plain CP10K + log1p before scanpy's dispersion-based `seurat` flavor — `pflog1ppf` is incompatible with it (its per-cell mean-centering breaks `seurat`'s dispersion calculation; verified ~40% of genes get NaN dispersion), so it's hardcoded rather than exposed as a choice there.
 - `n_genes`: integer (default 2000)
 
 ## Pipeline Architecture
@@ -56,7 +116,9 @@ Config files for different experiments are in `scripts/config_files/`. Key confi
 The Snakemake workflow (`scripts/Snakefile.smk`) chains three rule files:
 
 ```
-rules/preprocess.smk   → scripts/pipeline_scripts/prepare_inputs.R
+rules/preprocess.smk   → scripts/pipeline_scripts/prepare_inputs.py
+                          rule preprocess_cpu (hvg/full/rand/topbtvr/bottombtvr, CPU)
+                          rule preprocess_gpu (angl, resources: gres="gpu:1", gpu_slots=1)
 rules/integrate.smk    → scripts/pipeline_scripts/integration.py  (Python methods)
                        → scripts/seurat_integration.R             (Seurat method)
 rules/metrics.smk      → scripts/pipeline_scripts/metrics-scib_metrics.py  (scib_metrics)
@@ -66,8 +128,10 @@ rules/metrics.smk      → scripts/pipeline_scripts/metrics-scib_metrics.py  (sc
                        → scripts/pipeline_scripts/combine_metrics.py        (merge all)
 ```
 
+`preprocess_cpu` and `preprocess_gpu` both produce `preprocessed/{sample}_{gene_selection}.tsv`; each rule restricts which `gene_selection` values it can produce via `wildcard_constraints`, so Snakemake resolves the right rule per file with no input function needed — `rules/integrate.smk` just depends on the shared `PREPROCESS_OUTPUT` path pattern (defined in `Snakefile.smk`).
+
 **Data flow:**
-1. **Preprocess** (`prepare_inputs.R`): reads `.h5ad`, selects genes using the specified method, writes a TSV with column `hgnc_symbol`.
+1. **Preprocess** (`prepare_inputs.py`): reads `.h5ad`, selects genes using the specified method (`hvg` → CP10K + log1p then `scanpy.pp.highly_variable_genes(flavor="seurat", batch_key=...)`, `angl` → `pyanglemania.preprocessing.anglemania` on GPU with `normalization_method` set from `normalization_mode`, plus `full`/`rand`/`topbtvr`/`bottombtvr`), writes a TSV with column `hgnc_symbol`.
 2. **Integrate** (`integration.py` or `seurat_integration.R`): reads original `.h5ad` + gene list TSV, runs integration, writes integrated `.h5ad` with embedding in `obsm["X_emb"]`.
 3. **Metrics** (4 parallel scripts): each reads original + integrated `.h5ad`, computes one metric group, writes a TSV with columns `[metric, sample, integration_method, gene_selection]`.
 4. **Combine** (`combine_metrics.py`): merges all metric TSVs, recomputes Bio conservation / Batch correction / Total scores (60/40 weighted mean).
@@ -80,8 +144,8 @@ rules/metrics.smk      → scripts/pipeline_scripts/metrics-scib_metrics.py  (sc
 ## Running Individual Scripts Manually
 
 ```bash
-# Gene selection
-Rscript scripts/pipeline_scripts/prepare_inputs.R \
+# Gene selection (runs in the `pyanglemania` conda env: conda run -n pyanglemania ...)
+python3 scripts/pipeline_scripts/prepare_inputs.py \
     --infile data/sample.h5ad --outfile out/genes.tsv \
     --batch_key Batch --gene_selection angl
 
@@ -116,6 +180,6 @@ output_dir/
 - All integrated objects must store their embedding in `obsm["X_emb"]`
 - scanorama requires cells sorted by batch (done automatically in `integration.py`)
 - The `JAX_PLATFORMS=cpu` environment variable is set before Python integrations to prevent JAX GPU conflicts
-- GPU resources are assigned dynamically for `scvi`/`scanvi` via Snakemake `resources: gpu`
+- GPU resources are assigned via `gres="gpu:1"` for `scvi`/`scanvi` in `integrate` and always for `preprocess_gpu` (the `angl` gene-selection rule); pipeline-wide GPU concurrency is capped separately via the `gpu_slots` resource (see SLURM execution details above)
 - Notebooks for visualization and simulation are in `scripts/notebooks/`
 - Utility ggplot functions shared across notebooks are in `scripts/utils/ggplot_utils.R` and `scripts/ggplot_utils.R`

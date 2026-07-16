@@ -39,6 +39,9 @@ SAMPLES = file_paths.keys()
 INTEGRATION_METHODS = config["integration_methods"]
 GENE_SELECTIONS = config['gene_selection']
 
+onstart:
+    os.makedirs("logs/slurm", exist_ok=True)
+
 include: "rules/preprocess.smk"
 include: "rules/integrate.smk"
 include: "rules/metrics.smk"

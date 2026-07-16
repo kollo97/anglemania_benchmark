@@ -9,8 +9,9 @@ rule integrate:
         batch_key = config["batch_key"],
         label_key = config["label_key"]
     resources:
-        # Dynamically assign GPU resource based on integration method
-        gpu=lambda wildcards: 1 if wildcards.integration_method in ["scvi", "scanvi"] else 0
+        cpus_per_task=4,
+        mem_mb = 32000,
+        runtime = 360
     shell:
         """
         if [[ "{wildcards.integration_method}" = "harmony" || "{wildcards.integration_method}" = "scvi" || "{wildcards.integration_method}" = "scanvi" || "{wildcards.integration_method}" = "scanorama" ]]; then
