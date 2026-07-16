@@ -94,7 +94,7 @@ def calc_metrics(original_h5ad,
             pcr_comparison=True
         ),
         embedding_obsm_keys=['X_emb'],
-        n_jobs = 10
+        n_jobs = len(os.sched_getaffinity(0))
     )
     bm.benchmark()
     metrics = bm.get_results(min_max_scale=False).reset_index(drop=True)
