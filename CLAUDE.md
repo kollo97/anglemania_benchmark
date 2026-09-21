@@ -56,9 +56,10 @@ rule's `resources` block into `sbatch` flags. Resource defaults:
 | `gres`        | —       | `--gres`; GPU rules use `gres="gpu:1"`         |
 | `gpu_slots`   | —       | not an sbatch flag; local Snakemake resource pool (see below) |
 
-GPU rules (`preprocess_gpu`, `integrate` with scvi/scanvi) set
-`gres="gpu:1"`. If your cluster routes GPU jobs through a dedicated
-partition, also add `partition="gpu"` (or equivalent) to those rules.
+`preprocess_gpu` is the only rule that sets `gres="gpu:1"` — `integrate` runs
+scvi/scanvi on CPU (Guix's python-pytorch has no CUDA). If your cluster routes
+GPU jobs through a dedicated partition, also add `partition="gpu"` (or
+equivalent) to that rule.
 
 **Important:** Do NOT add `gpu=N` to a rule's `resources` block. The native
 SLURM executor plugin converts any resource named `gpu` into `--gpu=N` as an
@@ -68,7 +69,7 @@ when multiple GPU jobs submit simultaneously, the `slurm_extra` code path in
 the executor deadlocks (all submission threads wait on the same mutex). Use
 `gres="gpu:1"` instead; SLURM's scheduler handles concurrent GPU allocation.
 
-GPU rules also set `gpu_slots=1`, and `slurm_profile/config.yaml` caps the
+`preprocess_gpu` also sets `gpu_slots=1`, and `slurm_profile/config.yaml` caps the
 global `gpu_slots` pool at 1 (`resources: [gpu_slots=1]`). Since `gres` isn't
 a resource Snakemake itself schedules on (it's only translated into an sbatch
 flag), without this Snakemake will submit as many `gres="gpu:1"` jobs at once
@@ -82,23 +83,14 @@ GPU jobs.
 
 SLURM logs go to `scripts/logs/slurm/` (created automatically on pipeline start).
 
-**Prerequisite (one-time setup):**
-
-1. Install the plugin using Python 3.11 (the version Guix snakemake uses):
-```bash
-python3 -m pip install --user snakemake-executor-plugin-cluster-generic
-```
-
-2. Add this line to `~/.bashrc` so the plugin is on Guix's Python path:
-```bash
-export GUIX_PYTHONPATH="$HOME/.local/lib/python3.11/site-packages${GUIX_PYTHONPATH:+:$GUIX_PYTHONPATH}"
-```
-The Guix snakemake wrapper appends the existing `$GUIX_PYTHONPATH` to its store paths,
-so this makes the plugin visible inside the Guix shell without breaking anything.
+**No setup needed.** `snakemake-executor-plugin-slurm` and
+`-slurm-jobstep` are defined in `guix/manifest.scm`, so they are on the path
+inside `bm_guix`. Nothing has to be pip-installed.
 
 **Important:** run Snakemake from inside `bm_guix` so that the Guix python/R
-binaries are on PATH — the profile passes `--export=ALL` to sbatch, so each
-submitted job inherits the full Guix environment.
+binaries and the executor plugins are on PATH — the profile passes
+`--export=ALL` to sbatch, so each submitted job inherits the full Guix
+environment.
 
 Config files for different experiments are in `scripts/config_files/`. Key config parameters:
 - `samplesheet`: TSV/CSV/JSON file with `sample_name` and `file_path` columns (pointing to `.h5ad` files)
@@ -202,6 +194,7 @@ output_dir/
 - `integration.py` stores the embedding in `obsm["X_emb"]` internally, then writes it out as the embedding TSV the metrics rules consume
 - scanorama requires cells sorted by batch (done automatically in `integration.py`)
 - The `JAX_PLATFORMS=cpu` environment variable is set before Python integrations to prevent JAX GPU conflicts
-- GPU resources are assigned via `gres="gpu:1"` for `scvi`/`scanvi` in `integrate` and always for `preprocess_gpu` (the `angl` gene-selection rule); pipeline-wide GPU concurrency is capped separately via the `gpu_slots` resource (see SLURM execution details above)
+- GPU use is confined to gene selection and regulated in three places: both preprocess rules shell out to `conda run -n pyanglemania ...` (that env, not Guix, has CUDA-enabled `cupy` + pyanglemania); `preprocess_gpu` sets `gres="gpu:1"` to get a device from SLURM; and `gpu_slots=1` caps pipeline-wide GPU concurrency (see SLURM execution details above). `prepare_inputs.py` raises if no CUDA device is reachable — `angl`/`anglgene_*` have no CPU fallback
+- The `gpu:` key in some config files is vestigial — nothing in `Snakefile.smk`, `rules/` or `pipeline_scripts/` reads it
 - Notebooks for visualization and simulation are in `scripts/notebooks/`
 - Utility ggplot functions shared across notebooks are in `scripts/R/ggplot_utils.R` (the full set: `draw_heatmap*`, `theme_big_text`, `today`) and `scripts/utils/ggplot_utils.R` (only `big_text_theme`) — two separate files, not copies

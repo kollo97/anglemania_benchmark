@@ -34,21 +34,38 @@ Keep the conda env in sync with:
 mamba env update -f ~/projects/pyanglemania/envs/pyanglemania.yml
 ```
 
-> Note: Guix's `python-pytorch` has no CUDA support, so scVI/scanVI integration always runs on CPU inside `bm_guix`. Only the gene-selection rules (which use the conda env) actually use the GPU.
+Nothing else needs installing for cluster runs: the SLURM executor plugins
+(`snakemake-executor-plugin-slurm` and `-slurm-jobstep`) are part of
+`guix/manifest.scm`, so they are already on the path inside `bm_guix`. Start
+Snakemake from that shell and the `--profile slurm_profile/` run works as-is.
+The profile passes `--export=ALL` to sbatch, so each submitted job inherits the
+same Guix environment.
 
-### One-time SLURM setup
+### Which stages use the GPU
 
-To run on the cluster, install the executor plugin with the same Python version Guix's snakemake uses (3.11):
+Only gene selection does, and only through the conda env — it is regulated in
+three places:
 
-```bash
-python3 -m pip install --user snakemake-executor-plugin-cluster-generic
-```
+| Layer | Mechanism |
+|-------|-----------|
+| Environment | Both preprocess rules shell out to `conda run -n pyanglemania python3 pipeline_scripts/prepare_inputs.py`. That env, not Guix, provides CUDA-enabled `cupy` and pyanglemania. |
+| Allocation | `preprocess_gpu` sets `resources: gres="gpu:1"`, which the SLURM profile turns into `sbatch --gres=gpu:1`. It is the **only** rule that requests a GPU. |
+| Concurrency | The same rule sets `gpu_slots=1` against the profile's global `gpu_slots` pool, capping how many GPU jobs Snakemake has in flight pipeline-wide. |
 
-and add to `~/.bashrc` so it is on Guix's Python path:
+`prepare_inputs.py` moves the matrix onto the device with `cupy` before calling
+pyanglemania and **raises** if no CUDA device is reachable — the `angl` and
+`anglgene_*` arms have no CPU fallback. `preprocess_cpu` uses the same conda
+env but never touches the GPU, so its arms (`hvg`, `full`, `rand`, `topbtvr`,
+`bottombtvr`, `hvg_intersect`) run anywhere.
 
-```bash
-export GUIX_PYTHONPATH="$HOME/.local/lib/python3.11/site-packages${GUIX_PYTHONPATH:+:$GUIX_PYTHONPATH}"
-```
+Integration is the opposite case: it runs under Guix, whose `python-pytorch` is
+built without CUDA, so scVI/scanVI always run on CPU. The `integrate` rule
+accordingly requests no `gres` — don't set `accelerator="gpu"` in
+`integration.py` expecting it to work.
+
+> The `gpu:` key present in some config files is vestigial — nothing in
+> `Snakefile.smk`, `rules/` or `pipeline_scripts/` reads it. GPU use is decided
+> by the rule a `gene_selection` value routes to, not by config.
 
 ## Usage
 
@@ -71,10 +88,11 @@ snakemake -s Snakefile.smk --configfile config_files/<config>.yml --cores 8
 
 `scripts/slurm_profile/config.yaml` translates each rule's `resources` block into
 `sbatch` flags. Defaults: `cpus_per_task=4`, `mem_mb=16000`, `runtime=60`.
-GPU rules request `gres="gpu:1"`, and pipeline-wide GPU concurrency is capped
-separately by a Snakemake-local `gpu_slots` pool (default 1 — raise it in the
-profile to allow more concurrent GPU jobs). Logs go to `scripts/logs/slurm/`,
-created automatically on pipeline start.
+`preprocess_gpu` additionally requests `gres="gpu:1"`, and pipeline-wide GPU
+concurrency is capped separately by a Snakemake-local `gpu_slots` pool (default
+1 — raise it in the profile to allow more concurrent GPU jobs); see
+[Which stages use the GPU](#which-stages-use-the-gpu). Logs go to
+`scripts/logs/slurm/`, created automatically on pipeline start.
 
 Two gotchas baked into the profile, both of which cause silent job failures if
 undone:

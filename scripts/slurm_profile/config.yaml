@@ -5,7 +5,7 @@
 #   cpus_per_task  → sbatch --cpus-per-task
 #   mem_mb         → sbatch --mem (MB)
 #   runtime        → sbatch --time (integer minutes)
-#   gres           → sbatch --gres  (GPU rules use gres="gpu:1")
+#   gres           → sbatch --gres  (only preprocess_gpu uses gres="gpu:1")
 #   gpu_slots      → NOT an sbatch flag. A plain Snakemake-local resource pool
 #                    (capped below) that throttles how many gres="gpu:1" jobs
 #                    Snakemake will submit at once, pipeline-wide.
@@ -27,8 +27,8 @@ default-resources:
   - runtime=60
 
 # Global resource caps: never exceed 30 CPUs, and never run more than 1
-# gres="gpu:1" job (preprocess_gpu / integrate scvi+scanvi) concurrently —
-# raise gpu_slots if more GPUs should be used in parallel.
+# gres="gpu:1" job (preprocess_gpu — the only GPU rule; integrate runs
+# scvi/scanvi on CPU) concurrently. Raise gpu_slots to use more GPUs at once.
 resources:
   - cpus_per_task=30
   - gpu_slots=1
