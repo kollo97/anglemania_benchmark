@@ -26,12 +26,30 @@ bm_guix
 guix time-machine -C guix/channels.scm -- shell -m guix/manifest.scm --no-grafts python-numpyro
 ```
 
-Gene selection (`prepare_inputs.py`) instead runs in a dedicated `pyanglemania` conda environment (GPU-accelerated, spec at `~/projects/pyanglemania/envs/pyanglemania.yml`), which the Snakemake rules invoke via `conda run -n pyanglemania`. Snakemake itself is still started from `bm_guix`.
+Gene selection (`prepare_inputs.py`) cannot run under Guix — it needs the
+GPU-accelerated [`pyanglemania`](https://github.com/omnideconv/pyanglemania)
+package and a CUDA-enabled `cupy`. Both preprocess rules therefore declare
 
-Keep the conda env in sync with:
+```python
+conda: PYANGLEMANIA_ENV     # -> envs/pyanglemania.yml
+```
+
+and Snakemake builds and caches that environment itself (under
+`scripts/.snakemake/conda/`) the first time it is needed. Snakemake is still
+started from `bm_guix`; only these two rules step outside it.
+
+**This only works if you pass `--sdm conda`** (`--software-deployment-method
+conda`). Without it Snakemake ignores the `conda:` directive and the rules run
+under Guix python, where pyanglemania does not exist. The SLURM profile sets it
+for you; add it by hand for local runs.
+
+`envs/pyanglemania.yml` is a copy of upstream's
+`~/projects/pyanglemania/envs/pyanglemania.yml` with pyanglemania itself added
+as an editable install of the local checkout (upstream's file is a dev spec
+that assumes you pip-install the package by hand). Keep the two in sync:
 
 ```bash
-mamba env update -f ~/projects/pyanglemania/envs/pyanglemania.yml
+diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml
 ```
 
 Nothing else needs installing for cluster runs: the SLURM executor plugins
@@ -48,7 +66,7 @@ three places:
 
 | Layer | Mechanism |
 |-------|-----------|
-| Environment | Both preprocess rules shell out to `conda run -n pyanglemania python3 pipeline_scripts/prepare_inputs.py`. That env, not Guix, provides CUDA-enabled `cupy` and pyanglemania. |
+| Environment | Both preprocess rules declare `conda: PYANGLEMANIA_ENV` (`envs/pyanglemania.yml`). That env, not Guix, provides CUDA-enabled `cupy` and pyanglemania. Needs `--sdm conda`. |
 | Allocation | `preprocess_gpu` sets `resources: gres="gpu:1"`, which the SLURM profile turns into `sbatch --gres=gpu:1`. It is the **only** rule that requests a GPU. |
 | Concurrency | The same rule sets `gpu_slots=1` against the profile's global `gpu_slots` pool, capping how many GPU jobs Snakemake has in flight pipeline-wide. |
 
@@ -75,13 +93,13 @@ All pipeline commands run from the `scripts/` directory, inside `bm_guix`:
 cd scripts/
 
 # Dry run — check what will be executed
-snakemake -s Snakefile.smk --configfile config_files/<config>.yml -n
+snakemake -s Snakefile.smk --configfile config_files/<config>.yml --sdm conda -n
 
 # Cluster run (preferred — one SLURM job per rule)
 snakemake -s Snakefile.smk --configfile config_files/<config>.yml --profile slurm_profile/
 
-# Local run
-snakemake -s Snakefile.smk --configfile config_files/<config>.yml --cores 8
+# Local run (--sdm conda is required; the SLURM profile above sets it itself)
+snakemake -s Snakefile.smk --configfile config_files/<config>.yml --sdm conda --cores 8
 ```
 
 ### SLURM profile
@@ -302,7 +320,8 @@ CMS, BRAS) are included.
 ## Running Individual Scripts Manually
 
 ```bash
-# Gene selection (in the pyanglemania conda env)
+# Gene selection (needs the pyanglemania env; outside Snakemake, activate it
+# yourself -- `conda env create -f envs/pyanglemania.yml` if you don't have it)
 conda run -n pyanglemania python3 scripts/pipeline_scripts/prepare_inputs.py \
     --infile data/sample.h5ad --outfile out/genes.tsv \
     --batch_key Batch --gene_selection angl

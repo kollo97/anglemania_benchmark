@@ -21,6 +21,12 @@
 
 executor: slurm
 
+# The preprocess rules declare conda: envs/pyanglemania.yml. Without this the
+# conda: directive is silently ignored and they run under Guix python, where
+# pyanglemania and cupy do not exist. For local runs, pass --sdm conda.
+software-deployment-method:
+  - conda
+
 default-resources:
   - cpus_per_task=4
   - mem_mb=16000

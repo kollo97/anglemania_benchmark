@@ -24,7 +24,13 @@ A conda environment (`angl_BM2`) is also defined in `envs/env.yml` as an alterna
 - `anglemania` R package (the legacy R implementation, superseded by `pyanglemania` for gene selection)
 - `CellMixS`, `balanced_clustering` Python package
 
-Gene selection (`scripts/pipeline_scripts/prepare_inputs.py`) runs in a separate **`pyanglemania` conda environment**, not in the Guix environment, because it depends on the GPU-accelerated [`pyanglemania`](https://github.com/omnideconv/pyanglemania) package (`~/projects/pyanglemania`, env spec at `~/projects/pyanglemania/envs/pyanglemania.yml`) and on `scikit-misc` (only needed if `hvg` is switched to scanpy's `seurat_v3` flavor; not used by the current `seurat` flavor, kept installed for that option). Sync it with `mamba env update -f ~/projects/pyanglemania/envs/pyanglemania.yml`. The Snakemake rules invoke it via `conda run -n pyanglemania`, so `snakemake` itself still runs from `bm_guix`.
+Gene selection (`scripts/pipeline_scripts/prepare_inputs.py`) runs in a separate **conda environment**, not in the Guix environment, because it depends on the GPU-accelerated [`pyanglemania`](https://github.com/omnideconv/pyanglemania) package (`~/projects/pyanglemania`) and on `scikit-misc` (only needed if `hvg` is switched to scanpy's `seurat_v3` flavor; not used by the current `seurat` flavor, kept installed for that option).
+
+That env is specified by `envs/pyanglemania.yml` and declared on both preprocess rules via `conda: PYANGLEMANIA_ENV` (defined in `Snakefile.smk` from `workflow.basedir`, so it resolves to an absolute path). Snakemake builds and caches it under `scripts/.snakemake/conda/`. **Runs must pass `--sdm conda`** — without it Snakemake silently ignores the `conda:` directive and the rules run under Guix python, where pyanglemania does not exist. `slurm_profile/config.yaml` sets `software-deployment-method: [conda]`; local runs need the flag on the command line. `snakemake` itself still runs from `bm_guix`.
+
+`envs/pyanglemania.yml` is a copy of `~/projects/pyanglemania/envs/pyanglemania.yml` with pyanglemania added as an editable install of the local checkout — upstream's file is a dev spec that assumes the package is pip-installed by hand. Keep them in sync (`diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml`).
+
+**Requires conda >= 24.7.1** (a Snakemake 8 check). Update with `conda update -n base -c conda-forge conda`; on an older conda every run aborts at DAG build with `CreateCondaEnvironmentException`, even a dry run.
 
 ## Running the Pipeline
 
@@ -34,12 +40,13 @@ The main pipeline is a Snakemake workflow. All commands run from `scripts/`:
 cd scripts/
 
 # Dry run to check pipeline
-snakemake -s Snakefile.smk --configfile config_files/<config>.yml -n
+snakemake -s Snakefile.smk --configfile config_files/<config>.yml --sdm conda -n
 
 # Run pipeline (local)
-snakemake -s Snakefile.smk --configfile config_files/<config>.yml --cores <N>
+snakemake -s Snakefile.smk --configfile config_files/<config>.yml --sdm conda --cores <N>
 
-# Run with SLURM (preferred — each rule becomes a separate SLURM job)
+# Run with SLURM (preferred — each rule becomes a separate SLURM job).
+# The profile sets --sdm conda itself.
 snakemake -s Snakefile.smk --configfile config_files/<config>.yml --profile slurm_profile/
 ```
 
@@ -158,7 +165,7 @@ rules/metrics.smk      → scripts/pipeline_scripts/metrics-scib_metrics.py  (sc
 ## Running Individual Scripts Manually
 
 ```bash
-# Gene selection (runs in the `pyanglemania` conda env: conda run -n pyanglemania ...)
+# Gene selection (needs the pyanglemania env; outside Snakemake, activate it yourself)
 python3 scripts/pipeline_scripts/prepare_inputs.py \
     --infile data/sample.h5ad --outfile out/genes.tsv \
     --batch_key Batch --gene_selection angl
@@ -194,7 +201,7 @@ output_dir/
 - `integration.py` stores the embedding in `obsm["X_emb"]` internally, then writes it out as the embedding TSV the metrics rules consume
 - scanorama requires cells sorted by batch (done automatically in `integration.py`)
 - The `JAX_PLATFORMS=cpu` environment variable is set before Python integrations to prevent JAX GPU conflicts
-- GPU use is confined to gene selection and regulated in three places: both preprocess rules shell out to `conda run -n pyanglemania ...` (that env, not Guix, has CUDA-enabled `cupy` + pyanglemania); `preprocess_gpu` sets `gres="gpu:1"` to get a device from SLURM; and `gpu_slots=1` caps pipeline-wide GPU concurrency (see SLURM execution details above). `prepare_inputs.py` raises if no CUDA device is reachable — `angl`/`anglgene_*` have no CPU fallback
+- GPU use is confined to gene selection and regulated in three places: both preprocess rules declare `conda: PYANGLEMANIA_ENV` (that env, not Guix, has CUDA-enabled `cupy` + pyanglemania; needs `--sdm conda`); `preprocess_gpu` sets `gres="gpu:1"` to get a device from SLURM; and `gpu_slots=1` caps pipeline-wide GPU concurrency (see SLURM execution details above). `prepare_inputs.py` raises if no CUDA device is reachable — `angl`/`anglgene_*` have no CPU fallback
 - The `gpu:` key in some config files is vestigial — nothing in `Snakefile.smk`, `rules/` or `pipeline_scripts/` reads it
 - Notebooks for visualization and simulation are in `scripts/notebooks/`
 - Utility ggplot functions shared across notebooks are in `scripts/R/ggplot_utils.R` (the full set: `draw_heatmap*`, `theme_big_text`, `today`) and `scripts/utils/ggplot_utils.R` (only `big_text_theme`) — two separate files, not copies

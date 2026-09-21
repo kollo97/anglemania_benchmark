@@ -15,6 +15,14 @@ out_embedding = join(config["output_dir"], config["out_embedding"])
 # by their wildcard_constraints on gene_selection).
 PREPROCESS_OUTPUT = join(out_preprocessed, "{sample}_{gene_selection}.tsv")
 
+# Gene-selection conda env (rules/preprocess.smk). workflow.basedir is this
+# Snakefile's directory, so this resolves to <repo>/envs/pyanglemania.yml
+# regardless of the cwd or of which included .smk file uses it. Requires
+# --sdm conda; without it Snakemake silently ignores the conda: directive.
+PYANGLEMANIA_ENV = os.path.normpath(
+    join(workflow.basedir, "..", "envs", "pyanglemania.yml")
+)
+
 
 ############## INPUT #################
 # check if samplesheet is tsv or json

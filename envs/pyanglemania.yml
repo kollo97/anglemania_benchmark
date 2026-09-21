@@ -1,0 +1,39 @@
+# Gene-selection environment (rules preprocess_cpu / preprocess_gpu).
+#
+# Copied from ~/projects/pyanglemania/envs/pyanglemania.yml, with pyanglemania
+# itself added: the upstream file is a *development* env spec and assumes you
+# pip-install the package into it by hand, which is fine interactively but not
+# when Snakemake builds the env from this file.
+#
+# Snakemake materializes this under scripts/.snakemake/conda/ when run with
+# --sdm conda. Keep it in sync with upstream:
+#   diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml
+name: pyanglemania
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - pip
+  - scanpy
+  - scikit-misc
+  - click
+  - python-igraph
+  - leidenalg
+  - scvi-tools
+  - harmonypy
+  - anndata
+  - pytest
+  - ruff
+  - hatchling
+  - ipykernel
+  - nbconvert
+  - cuda-cudart-dev=12.9
+  - pip:
+      - cupy-cuda12x
+      # Editable install of the local checkout, so pyanglemania changes take
+      # effect without rebuilding the env -- same as the hand-made env this
+      # replaces. Swap for a pinned
+      # "pyanglemania @ git+https://github.com/omnideconv/pyanglemania@<sha>"
+      # if the benchmark ever needs to be reproducible off this machine.
+      - -e /home/akollot/projects/pyanglemania

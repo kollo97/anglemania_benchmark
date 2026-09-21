@@ -11,13 +11,15 @@ rule preprocess_cpu:
         n_genes = config["n_genes"],
         permutation_function = config["permutation_function"],
         normalization_mode = config["normalization_mode"]
+    conda:
+        PYANGLEMANIA_ENV
     resources:
         cpus_per_task = 2,
         mem_mb = 16000,
         runtime = 60
     shell:
         """
-        conda run -n pyanglemania python3 pipeline_scripts/prepare_inputs.py \
+        python3 pipeline_scripts/prepare_inputs.py \
             --infile {input.original_h5ad} \
             --outfile {output.outfile} \
             --batch_key {params.batch_key} \
@@ -62,6 +64,8 @@ rule preprocess_gpu:
             and wildcards.gene_selection.startswith("anglgene")
             else ""
         )
+    conda:
+        PYANGLEMANIA_ENV
     resources:
         cpus_per_task = 2,
         mem_mb = 16000,
@@ -70,7 +74,7 @@ rule preprocess_gpu:
         gpu_slots = 1
     shell:
         """
-        conda run -n pyanglemania python3 pipeline_scripts/prepare_inputs.py \
+        python3 pipeline_scripts/prepare_inputs.py \
             --infile {input.original_h5ad} \
             --outfile {output.outfile} \
             --batch_key {params.batch_key} \
