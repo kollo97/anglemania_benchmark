@@ -44,13 +44,29 @@ under Guix python, where pyanglemania does not exist. The SLURM profile sets it
 for you; add it by hand for local runs.
 
 `envs/pyanglemania.yml` is a copy of upstream's
-`~/projects/pyanglemania/envs/pyanglemania.yml` with pyanglemania itself added
-as an editable install of the local checkout (upstream's file is a dev spec
-that assumes you pip-install the package by hand). Keep the two in sync:
+`~/projects/pyanglemania/envs/pyanglemania.yml` with `pyanglemania` itself
+added to the `pip:` list — upstream's file is a dev spec that assumes you
+install the package by hand, which doesn't work when Snakemake builds the env
+from the file. Keep the two in sync:
 
 ```bash
 diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml
 ```
+
+pyanglemania is installed from [PyPI](https://pypi.org/project/pyanglemania/)
+(0.1.0 at time of writing), which has two consequences worth knowing:
+
+- **Local edits no longer reach the pipeline.** The env pulls the *released*
+  package, not `~/projects/pyanglemania`. To benchmark unreleased work, swap
+  the `pyanglemania` line for `-e /home/akollot/projects/pyanglemania`.
+- **The dependency is unpinned**, so an env rebuilt later can pick up a newer
+  release than an earlier run used. Pin it (`pyanglemania==0.1.0`) before any
+  run whose gene lists need to be reproducible.
+
+Editing this file changes the env hash: Snakemake rebuilds the (~11 GB) env and
+treats every `preprocess_*` output as stale, which cascades through integrate
+and metrics. Use `--rerun-triggers mtime` if you don't want completed work
+recomputed.
 
 Nothing else needs installing for cluster runs: the SLURM executor plugins
 (`snakemake-executor-plugin-slurm` and `-slurm-jobstep`) are part of

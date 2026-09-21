@@ -8,6 +8,9 @@
 # Snakemake materializes this under scripts/.snakemake/conda/ when run with
 # --sdm conda. Keep it in sync with upstream:
 #   diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml
+#
+# Changing this file changes the env hash, so Snakemake rebuilds the ~11 GB env
+# and marks every preprocess output stale.
 name: pyanglemania
 channels:
   - conda-forge
@@ -31,9 +34,10 @@ dependencies:
   - cuda-cudart-dev=12.9
   - pip:
       - cupy-cuda12x
-      # Editable install of the local checkout, so pyanglemania changes take
-      # effect without rebuilding the env -- same as the hand-made env this
-      # replaces. Swap for a pinned
-      # "pyanglemania @ git+https://github.com/omnideconv/pyanglemania@<sha>"
-      # if the benchmark ever needs to be reproducible off this machine.
+      # Released package from PyPI. Unpinned, so a rebuilt env can pick up a
+      # newer pyanglemania than the one a previous run used -- pin it
+      # ("pyanglemania==0.1.0") before any run whose gene lists have to be
+      # reproducible. Note this is the *released* version: local edits in
+      # ~/projects/pyanglemania no longer reach the pipeline. To benchmark
+      # unreleased work, swap in "-e /home/akollot/projects/pyanglemania".
       - pyanglemania

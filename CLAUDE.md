@@ -28,7 +28,9 @@ Gene selection (`scripts/pipeline_scripts/prepare_inputs.py`) runs in a separate
 
 That env is specified by `envs/pyanglemania.yml` and declared on both preprocess rules via `conda: PYANGLEMANIA_ENV` (defined in `Snakefile.smk` from `workflow.basedir`, so it resolves to an absolute path). Snakemake builds and caches it under `scripts/.snakemake/conda/`. **Runs must pass `--sdm conda`** — without it Snakemake silently ignores the `conda:` directive and the rules run under Guix python, where pyanglemania does not exist. `slurm_profile/config.yaml` sets `software-deployment-method: [conda]`; local runs need the flag on the command line. `snakemake` itself still runs from `bm_guix`.
 
-`envs/pyanglemania.yml` is a copy of `~/projects/pyanglemania/envs/pyanglemania.yml` with pyanglemania added as an editable install of the local checkout — upstream's file is a dev spec that assumes the package is pip-installed by hand. Keep them in sync (`diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml`).
+`envs/pyanglemania.yml` is a copy of `~/projects/pyanglemania/envs/pyanglemania.yml` with `pyanglemania` added to the `pip:` list — upstream's file is a dev spec that assumes the package is installed by hand. Keep them in sync (`diff envs/pyanglemania.yml ~/projects/pyanglemania/envs/pyanglemania.yml`).
+
+pyanglemania comes from PyPI (0.1.0), so **local edits in `~/projects/pyanglemania` no longer reach the pipeline** — swap the `pyanglemania` line for `-e /home/akollot/projects/pyanglemania` to benchmark unreleased work. The dependency is unpinned; pin it (`pyanglemania==0.1.0`) before runs whose gene lists must be reproducible. Editing the file changes the env hash, so Snakemake rebuilds the ~11 GB env and marks every `preprocess_*` output stale (cascading to integrate and metrics) — `--rerun-triggers mtime` avoids recomputing finished work.
 
 **Requires conda >= 24.7.1** (a Snakemake 8 check). Update with `conda update -n base -c conda-forge conda`; on an older conda every run aborts at DAG build with `CreateCondaEnvironmentException`, even a dry run.
 
