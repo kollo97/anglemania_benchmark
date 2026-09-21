@@ -1,0 +1,44 @@
+# Batch-strength sweep for the per-gene signal/R work.
+#
+# Same simulation grid point (de.facLoc 0.1, nbatch 4, ngroup 4, groupCells 1000)
+# at three batch effect strengths: batch.facLoc 0.1 / 0.3 / 0.6. 0.3 is what the
+# earlier genelevel runs used; 0.1 and 0.6 bracket it, so the question "does the
+# per-gene score's advantage grow with batch strength" gets a 3-point trend
+# rather than a single comparison.
+#
+# Seven gene selections, run in one directory so every arm is internally
+# comparable:
+#   hvg            - the reference to beat
+#   angl           - anglemania's gene-pair ranking
+#   anglgene       - per-gene 0.5*z(log signal) + 0.5*z(R), binned by expression
+#   anglgene_nobin - the same, z-scored globally
+#   hvg_rfilter    - drop the worst 50% of genes by binned R, then HVG on the rest
+#   hvg_rweight    - rank on dispersions_norm + 1.0 * binned R z-score
+#   hvg_intersect  - HVG on the all-batch intersection, no R (the control that
+#                    separates an R effect from an intersection effect)
+name: genelevel_batchsweep
+
+samplesheet: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/samplesheet_genelevel_batchsweep.tsv"
+output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/pyanglemania/genelevel_batchsweep/"
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+out_embedding: "embedding/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+permutation_function: "sample"
+normalization_mode: "classical"
+n_genes: 2000
+
+anglgene_n_bins: 20
+anglgene_weight_signal: 0.5
+anglgene_weight_R: 0.5
+r_keep_frac: 0.5
+r_hvg_weight: 1.0
+
+integration_methods: ["scanorama", "scvi"]
+gene_selection: ["hvg", "angl", "anglgene", "anglgene_nobin",
+                 "hvg_rfilter", "hvg_rweight", "hvg_intersect"]
+gpu: False

@@ -74,4 +74,4 @@ message(paste0("Saving ", args$outfile))
 anndataR::write_h5ad(se, args$outfile)
 
 
-# Rscript seurat_integration.R --infile /data/akalin/akollot/anglemania_benchmark/data/pbmcsca/adata_hvg.h5ad --outdir /data/akalin/akollot/anglemania_benchmark/results/pbmcsca/hvg/ --batch_key batch --label_key CellType
+# Rscript pipeline_scripts/seurat_integration.R --infile /data/akalin/akollot/anglemania_benchmark/data/pbmcsca/adata_hvg.h5ad --outdir /data/akalin/akollot/anglemania_benchmark/results/pbmcsca/hvg/ --batch_key batch --label_key CellType

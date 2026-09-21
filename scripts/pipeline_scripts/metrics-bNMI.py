@@ -31,7 +31,7 @@ from os.path import join
 @click.option("--gene_selection",
               prompt="The implementation of the integration method to use from the scib package",
               help="Specify integration method. One of ['harmony','scvi','scanvi']",
-              type=click.Choice(['hvg', 'angl', 'full', 'rand', 'topbtvr', 'bottombtvr']))
+              type=click.Choice(['hvg', 'angl', 'anglmean', 'anglmod05', 'anglmod1', 'anglsiggene', 'anglgene', 'anglgene_nobin', 'anglgene_anchor', 'anglgene_biology', 'anglgene_noiselo', 'anglgene_noisehi', 'anglgene_mod', 'anglgene_anchor_mod', 'anglgene_biology_mod', 'hvg_rfilter', 'hvg_rweight', 'hvg_intersect', 'full', 'rand', 'topbtvr', 'bottombtvr']))
 @click.option("--label_key",
               default="CellType",
               help="Label key specifying a column in the metadata that specifies the cell type information")

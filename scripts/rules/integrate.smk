@@ -23,7 +23,7 @@ rule integrate:
                 --batch_key={params.batch_key} \
                 --label_key={params.label_key}
         elif [[ "{wildcards.integration_method}" = "seurat" ]]; then
-            Rscript seurat_integration.R --infile={input.original_h5ad} \
+            Rscript pipeline_scripts/seurat_integration.R --infile={input.original_h5ad} \
                                         --feature_subset={input.feature_subset} \
                                         --outfile {output.embedding} \
                                         --batch_key {params.batch_key} \

@@ -1,0 +1,46 @@
+# Per-gene anglemania scores (signal / R, expression-binned) vs pair-ranked angl
+# and hvg, on the Luecken & Theis human pancreas dataset.
+# anglemania_mode / normalization_mode match LueckenTheis_config.yml so the
+# existing angl and hvg gene lists in output_dir are directly comparable.
+name: genelevel_pancreas
+
+samplesheet: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/samplesheet_genelevel_pancreas.tsv"
+output_dir: "/data/akalin/akollot/anglemania_benchmark/Luecken_Theis_NatMethods_2021/pyanglemania"
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+out_embedding: "embedding/"
+
+batch_key: "batch"
+label_key: "celltype"
+anglemania_mode: "phi_s"
+permutation_function: "sample"
+normalization_mode: "pflog1ppf"
+n_genes: 2000
+
+# anglgene only: DUBStepR-style expression binning + the two axes' weights
+anglgene_n_bins: 20
+anglgene_weight_signal: 0.5
+anglgene_weight_R: 0.5
+# hvg_rfilter: keep the best 50% of scored genes by binned R before running HVG
+r_keep_frac: 0.5
+# hvg_rweight: dispersions_norm + r_hvg_weight * binned R z-score (both are
+# within-expression-bin z-scores, so 1.0 weights them equally)
+r_hvg_weight: 1.0
+
+# anglgene_* residual-axis arms: LOESS span for the two residual fits, and the
+# per-gene mean-expression bins the moderated-S prior trend is fitted over.
+anglgene_loess_span: 0.5
+anglgene_moderate_n_bins: 10
+# Every anglgene_* arm is a different ranking of the SAME cross-batch M/S.
+# make_genelevel_variant_lists.py computes it once and writes the table here;
+# preprocess_gpu reuses it instead of paying for the GPU pass per arm.
+anglgene_score_table_dir: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/genelevel_signal_R/variant_tables"
+
+integration_methods: ["scvi"]
+gene_selection: ["hvg", "angl", "anglgene", "anglgene_nobin",
+                 "anglgene_anchor", "anglgene_biology",
+                 "anglgene_noiselo", "anglgene_noisehi",
+                 "anglgene_mod", "anglgene_anchor_mod", "anglgene_biology_mod",
+                 "hvg_rfilter", "hvg_rweight", "hvg_intersect"]
+gpu: True

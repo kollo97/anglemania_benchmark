@@ -1,0 +1,535 @@
+---
+title: "How the number of biological groups moves gene--gene correlations and gene variances"
+subtitle: "Why a pair-correlation ranking (anglemania) is composition-sensitive and a variance ranking (HVG) is not"
+author: "anglemania benchmark"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    code_folding: hide
+    theme: simplex
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 10, fig.height = 5.5, dpi = 150,
+                      fig.align = "center")
+.libPaths(.Library)
+suppressPackageStartupMessages({
+    library(data.table)
+    library(ggplot2)
+    library(dplyr)
+    library(tidyr)
+    library(scales)
+    library(patchwork)
+    library(knitr)
+    library(grid)
+})
+DATA_DIR <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/mixed_effects/group_composition_effect"
+```
+
+## Question
+
+Two gene-selection methods rank on two different quantities:
+
+* **anglemania** ranks *gene pairs* by the z-score of their per-batch
+  **correlation**.
+* **HVG** ranks *genes* by their normalized-expression **variance** (dispersion).
+
+Both are computed on whatever mixture of cell types happens to be in the
+dataset. This report asks how much each quantity moves when the number of
+biological groups changes, separately for
+
+1. pairs that are **strongly anti-correlated** with 2 groups present,
+2. pairs that are **uncorrelated** with 2 groups present, and
+3. **per-gene normalized variance**,
+
+each measured against a matched **sampling-noise floor**, so that the effect of
+composition can be told apart from ordinary estimation noise.
+
+## Design
+
+Everything is computed **per batch** — one correlation matrix per batch, as
+anglemania does. Within a batch, every condition uses **exactly the same number
+of cells (n = 960)**, drawn from **disjoint halves** of each group's cells, so
+only the group *composition* differs:
+
+| condition | groups | cells | role |
+|---|---|---|---|
+| `A_2grp`    | Group1, Group2       | 480 + 480             | **anchor** — pairs/genes are selected here |
+| `Arep_2grp` | Group1, Group2       | 480 + 480 (other half)| **sampling-noise floor** — same composition, independent cells |
+| `B_3grp`    | Group1–3             | 320 each              | one group added |
+| `C_4grp`    | Group1–4             | 240 each              | two groups added |
+
+`Arep`/`B`/`C` share **no cells** with `A`. So `A → Arep` is pure estimation
+noise at the same *n* and the same composition, while `A → B` and `A → C` add
+one or two groups *on top of that same noise*. Any movement beyond the `Arep`
+level is the composition effect.
+
+Correlation is Pearson on CP10K + log1p, i.e. exactly pyanglemania's `cosine`
+method. "Normalized variance" is the variance of CP10K + log1p expression.
+
+Two splatter simulations, both `batch.facLoc0.3 / nbatch4 / ngroup4 /
+groupCells1000 / facScale0.1`, differing only in DE strength:
+
+* **`baseline_deLoc0.1`** — `de.facLoc = 0.1`, the dataset used by the
+  mixed-effects stability benchmark.
+* **`strongDE_deLoc0.6`** — `de.facLoc = 0.6`, the strongest DE setting in the
+  simulation grid. Needed because the baseline turns out to contain almost no
+  cell-level correlation signal at all (see below).
+
+Tables were produced by `scripts/python/stability_group_composition_effect.py`:
+
+```bash
+python3 scripts/python/stability_group_composition_effect.py \
+    --infile <sim>.h5ad --tag <tag> --outdir <DATA_DIR>
+```
+
+Beyond the four subsampled conditions, the script also reports an **ANOVA
+decomposition computed on all cells of the batch** (no subsampling at all), which
+serves as a second, noise-free control on the same question.
+
+```{r palette}
+SURFACE <- "#fcfcfb"; INK <- "#0b0b0b"; INK2 <- "#52514e"
+MUTED <- "#898781"; GRID <- "#e1e0d9"; AXIS <- "#c3c2b7"
+
+COND_LEVELS <- c("A_2grp", "Arep_2grp", "B_3grp", "C_4grp")
+COND_LABELS <- c("2 groups\n(anchor)", "2 groups\n(noise floor)",
+                 "3 groups", "4 groups")
+# ordinal blue ramp for the group-count progression (validated: monotone L,
+# single hue, light end 2.06:1 on the light surface); the noise-floor replicate
+# is a control rather than a step of the progression, so it takes neutral ink.
+COND_COL <- c(A_2grp = "#86b6ef", Arep_2grp = "#52514e",
+              B_3grp = "#2a78d6", C_4grp = "#104281")
+names(COND_LABELS) <- COND_LEVELS
+# two-category palette (validated all-pairs: normal-vision dE 33.6, CVD dE 24.7)
+DE_COL <- c(`DE gene` = "#2a78d6", `non-DE gene` = "#eb6834")
+PART_COL <- c(`between-group` = "#2a78d6", `within-group` = "#eb6834")
+
+theme_report <- function(base_size = 12) {
+    theme_minimal(base_size = base_size) +
+        theme(plot.background      = element_rect(fill = SURFACE, colour = NA),
+              panel.background     = element_rect(fill = SURFACE, colour = NA),
+              panel.grid.major     = element_line(colour = GRID, linewidth = .3),
+              panel.grid.minor     = element_blank(),
+              axis.line            = element_line(colour = AXIS, linewidth = .4),
+              axis.text            = element_text(colour = MUTED),
+              axis.title           = element_text(colour = INK2),
+              plot.title           = element_text(colour = INK, face = "bold", size = base_size + 1),
+              plot.subtitle        = element_text(colour = INK2, size = base_size - 1),
+              plot.caption         = element_text(colour = MUTED, size = base_size - 2, hjust = 0),
+              strip.text           = element_text(colour = INK, face = "bold"),
+              strip.text.y         = element_text(colour = INK, face = "bold", angle = 0),
+              panel.spacing        = unit(9, "pt"),
+              plot.title.position  = "plot",
+              legend.text          = element_text(colour = INK2),
+              legend.title         = element_text(colour = INK2),
+              legend.position      = "top")
+}
+cond_f <- function(x) factor(x, levels = COND_LEVELS, labels = COND_LABELS)
+# compact variant for plots with four facet columns, where the full labels collide
+COND_SHORT <- c("2\nanchor", "2\nnoise", "3", "4")
+cond_s <- function(x) factor(x, levels = COND_LEVELS, labels = COND_SHORT)
+X_NGROUPS <- "number of biological groups"
+```
+
+```{r load}
+TAGS <- c(strongDE_deLoc0.6 = "strong DE\nde.facLoc 0.6",
+          baseline_deLoc0.1  = "baseline\nde.facLoc 0.1")
+
+STRATUM_LAB <- c(neg_anchor  = "most anti-correlated\nin 2 groups",
+                 pos_anchor  = "most correlated\nin 2 groups",
+                 zero_anchor = "r \u2248 0 in 2 groups",
+                 both_nonDE  = "both genes non-DE\n(ground truth)",
+                 both_DE     = "both genes DE\n(ground truth)",
+                 random      = "random pairs")
+
+read_tag <- function(tag, what, ext = "csv.gz")
+    fread(file.path(DATA_DIR, paste0(tag, "_", what, ".", ext)))[, dataset := tag][]
+
+pairs    <- rbindlist(lapply(names(TAGS), read_tag, what = "pairs"))
+genes    <- rbindlist(lapply(names(TAGS), read_tag, what = "genes"))
+pairdist <- rbindlist(lapply(names(TAGS), read_tag, what = "pairdist", ext = "csv"))
+jacc     <- rbindlist(lapply(names(TAGS), read_tag, what = "jaccard",  ext = "csv"))
+for (d in list(pairs, genes, pairdist, jacc))
+    d[, ds_lab := factor(TAGS[dataset], levels = TAGS)]
+
+# long form: one row per pair x condition. r_anchor is carried along as an
+# id column (rather than joined back) so the delta needs no key matching.
+pairs[, r_anchor := r_A_2grp]
+pairs_long <- melt(pairs,
+                   id.vars = c("dataset", "ds_lab", "batch", "stratum",
+                               "r_anchor", "gm_r_K2", "gm_r_K3", "gm_r_K4"),
+                   measure.vars = paste0("r_", COND_LEVELS),
+                   variable.name = "cond", value.name = "r")
+pairs_long[, cond := sub("^r_", "", as.character(cond))]
+pairs_long[, delta := r - r_anchor]
+pairs_long[, strat_lab := factor(STRATUM_LAB[stratum], levels = STRATUM_LAB)]
+```
+
+## Part 1 — pairs that are strongly anti-correlated with 2 groups
+
+```{r p1-table}
+p1 <- pairs_long[stratum %in% c("neg_anchor", "pos_anchor")]
+tab1 <- p1[, .(n_pairs = .N,
+               median_r = median(r),
+               q25 = quantile(r, .25), q75 = quantile(r, .75),
+               `median |dr| vs anchor` = median(abs(delta)),
+               `% of anchor magnitude` = 100 * median(abs(r)) / median(abs(r_anchor)),
+               `frac. sign-flipped` = mean(sign(r) != sign(r_anchor))),
+           by = .(dataset, stratum, cond)][order(dataset, stratum, match(cond, COND_LEVELS))]
+kable(tab1, digits = 3, caption =
+      "Pairs selected as the 20,000 most negative (neg_anchor) / most positive (pos_anchor) in the 2-group condition, then looked up in the other conditions. Averaged over 4 batches.")
+```
+
+```{r p1-density, fig.height = 4.6}
+ggplot(p1[stratum == "neg_anchor"], aes(r, colour = cond_f(cond))) +
+    geom_line(stat = "density", linewidth = .9) +
+    geom_vline(xintercept = 0, colour = AXIS, linewidth = .4) +
+    facet_wrap(~ ds_lab, scales = "free") +
+    scale_colour_manual(values = setNames(COND_COL, COND_LABELS), name = NULL) +
+    labs(title = "Correlations of the most anti-correlated pairs collapse toward zero as groups are added",
+         subtitle = "Pairs chosen in the 2-group condition; the dark-grey curve is the same composition with independent cells",
+         x = "Pearson r (cell level, per batch)", y = "density") +
+    theme_report()
+```
+
+```{r p1-shift, fig.height = 5}
+shift <- p1[cond != "A_2grp",
+            .(med_abs_delta = median(abs(delta))), by = .(ds_lab, strat_lab, cond)]
+ggplot(shift, aes(cond_s(cond), med_abs_delta, fill = cond_s(cond))) +
+    geom_col(width = .68) +
+    geom_text(aes(label = number(med_abs_delta, accuracy = .001)),
+              vjust = -.45, colour = INK2, size = 3.4) +
+    facet_grid(ds_lab ~ strat_lab) +
+    scale_fill_manual(values = setNames(COND_COL, COND_SHORT), name = NULL) +
+    scale_y_continuous(expand = expansion(mult = c(0, .18))) +
+    labs(title = "How far a pair's correlation moves, against the sampling-noise floor",
+         subtitle = "Leftmost bar of each panel is the noise floor: same composition, independent cells",
+         x = X_NGROUPS, y = "median |Δr| vs the anchor") +
+    theme_report() + theme(legend.position = "none")
+```
+
+### The between-group component explains it
+
+Split a correlation into a within-group and a between-group part. The
+between-group part is the correlation of the *K group means*. **Two points
+always lie exactly on a line**, so with K = 2 the between-group correlation is
+$\pm 1$ for *every* gene pair — there is no such thing as a partially
+anti-correlated pair. Adding a third and fourth group turns that degenerate
+2-point configuration into a 3- or 4-point one, where intermediate values become
+possible. These group means are computed on **all** cells of the batch, so this
+panel carries no subsampling noise at all.
+
+```{r p1-gm, fig.height = 4.4}
+gm <- melt(pairs[stratum == "neg_anchor"],
+           id.vars = c("dataset", "ds_lab", "batch"),
+           measure.vars = c("gm_r_K2", "gm_r_K3", "gm_r_K4"),
+           variable.name = "K", value.name = "gm_r")
+gm[, K := factor(sub("gm_r_K", "", as.character(K)),
+                 levels = c("2", "3", "4"),
+                 labels = c("2 groups", "3 groups", "4 groups"))]
+ggplot(gm, aes(K, gm_r, fill = K)) +
+    geom_hline(yintercept = 0, colour = AXIS, linewidth = .4) +
+    geom_boxplot(width = .55, outlier.shape = NA, colour = INK2, linewidth = .4) +
+    facet_wrap(~ ds_lab) +
+    scale_fill_manual(values = unname(COND_COL[c("A_2grp", "B_3grp", "C_4grp")]),
+                      guide = "none") +
+    scale_y_continuous(limits = c(-1, 1)) +
+    labs(title = "Between-group component: correlation of the K group means",
+         subtitle = "With 2 groups it is exactly \u00b11 by construction: two points always lie on a line",
+         x = NULL, y = "correlation of the K group means",
+         caption = "Anti-correlated anchors only. Boxes: median and IQR; outliers suppressed (n = 80,000 pairs per box).") +
+    theme_report()
+kable(gm[, .(median = median(gm_r), q25 = quantile(gm_r, .25), q75 = quantile(gm_r, .75),
+             `frac <= -0.9` = mean(gm_r <= -0.9)), by = .(dataset, K)],
+      digits = 3, caption = "Between-group component for the anti-correlated anchors.")
+```
+
+### How many strongly correlated pairs exist at all
+
+```{r p1-counts, fig.height = 5}
+cnt <- melt(pairdist, id.vars = c("dataset", "ds_lab", "batch", "cond", "K", "n_pairs"),
+            measure.vars = c("n_le_m05", "n_le_m03", "n_abs_ge_02"),
+            variable.name = "thr", value.name = "n")
+cnt[, thr := factor(thr, levels = c("n_abs_ge_02", "n_le_m03", "n_le_m05"),
+                    labels = c("|r| >= 0.2", "r <= -0.3", "r <= -0.5"))]
+ggplot(cnt[, .(n = mean(n)), by = .(ds_lab, cond, thr)],
+       aes(cond_s(cond), n, fill = cond_s(cond))) +
+    geom_col(width = .68) +
+    facet_grid(ds_lab ~ thr, scales = "free_y") +
+    scale_fill_manual(values = setNames(COND_COL, COND_SHORT), name = NULL) +
+    scale_y_continuous(labels = label_number(big.mark = ","),
+                       expand = expansion(mult = c(0, .1))) +
+    labs(title = "Number of strongly correlated pairs in the full ~43M-pair matrix",
+         subtitle = "Mean over 4 batches; every condition uses the same 960 cells. An empty panel means zero pairs.",
+         x = X_NGROUPS, y = "pairs") +
+    theme_report() + theme(legend.position = "none")
+kable(dcast(cnt[, .(n = mean(n)), by = .(dataset, cond, thr)],
+            dataset + cond ~ thr, value.var = "n")[order(dataset, match(cond, COND_LEVELS))],
+      digits = 0, caption = "Pair counts above each threshold (mean over batches).")
+```
+
+## Part 2 — pairs that are *uncorrelated* with 2 groups
+
+Two definitions of "uncorrelated", because they answer slightly different
+questions:
+
+* **`zero_anchor`** — pairs whose observed *r* in the 2-group condition is
+  closest to 0. This is a selected extreme, so it must regress outward even
+  under pure resampling; the `Arep` bar is exactly that regression.
+* **`both_nonDE`** — pairs where **both genes are non-DE in every group**
+  (splatter's `DEFacGroup* == 1`), i.e. uncorrelated *by construction*,
+  independent of what was observed. No selection effect.
+
+```{r p2-table}
+p2 <- pairs_long[stratum %in% c("zero_anchor", "both_nonDE", "both_DE", "random")]
+tab2 <- p2[, .(n_pairs = .N, median_r = median(r), sd_r = sd(r),
+               `mean |r|` = mean(abs(r)),
+               `median |dr| vs anchor` = median(abs(delta)),
+               `frac |r| > 0.2` = mean(abs(r) > .2)),
+           by = .(dataset, stratum, cond)][order(dataset, stratum, match(cond, COND_LEVELS))]
+kable(tab2, digits = 4, caption =
+      "Uncorrelated (and, for contrast, random and both-DE) pairs across conditions.")
+```
+
+```{r p2-spread, fig.height = 5.4}
+sp <- p2[, .(sd_r = sd(r)), by = .(ds_lab, strat_lab, cond)]
+sp[, floor_sd := sd_r[cond == "Arep_2grp"], by = .(ds_lab, strat_lab)]
+ggplot(sp[cond != "A_2grp"], aes(cond_s(cond), sd_r, fill = cond_s(cond))) +
+    geom_col(width = .68) +
+    geom_hline(aes(yintercept = floor_sd), colour = INK2, linetype = "22", linewidth = .5) +
+    geom_text(aes(label = number(sd_r, accuracy = .0001)), vjust = -.45,
+              colour = INK2, size = 3.2) +
+    facet_grid(ds_lab ~ strat_lab, scales = "free_y") +
+    scale_fill_manual(values = setNames(COND_COL, COND_SHORT), name = NULL) +
+    scale_y_continuous(expand = expansion(mult = c(0, .2))) +
+    labs(title = "Spread of correlations for uncorrelated pairs barely responds to added groups",
+         subtitle = "Dashed line = the sampling-noise floor (same composition, independent cells)",
+         x = X_NGROUPS, y = "sd of r") +
+    theme_report() + theme(legend.position = "none")
+```
+
+```{r p2-density, fig.height = 5}
+ggplot(p2[stratum %in% c("zero_anchor", "both_nonDE") & cond != "A_2grp"],
+       aes(r, colour = cond_f(cond))) +
+    geom_line(stat = "density", linewidth = .9) +
+    facet_grid(ds_lab ~ strat_lab) +
+    scale_colour_manual(values = setNames(COND_COL, COND_LABELS), name = NULL) +
+    coord_cartesian(xlim = c(-.2, .2)) +
+    labs(title = "Uncorrelated pairs: the three curves are nearly indistinguishable",
+         subtitle = "Adding groups does not manufacture correlation where there is no DE signal",
+         x = "Pearson r", y = "density") +
+    theme_report()
+```
+
+## Part 3 — per-gene normalized variance
+
+```{r p3-prep}
+genes[, var_anchor := var_A_2grp]
+gl <- melt(genes, id.vars = c("dataset", "ds_lab", "batch", "gene", "n_de_groups",
+                              "max_abs_l2fc", "detect_rate", "var_anchor"),
+           measure.vars = paste0("var_", COND_LEVELS),
+           variable.name = "cond", value.name = "var_norm")
+gl[, cond := sub("^var_", "", as.character(cond))]
+gl[, de := ifelse(n_de_groups == 0, "non-DE gene", "DE gene")]
+gl[, l2ratio := log2(var_norm / var_anchor)]
+```
+
+```{r p3-table}
+tab3 <- gl[, .(n_genes = .N, median_var = median(var_norm),
+               `median var ratio vs anchor` = median(var_norm / var_anchor),
+               `median |log2 ratio|` = median(abs(l2ratio)),
+               `Spearman vs anchor` = cor(var_norm, var_anchor, method = "spearman")),
+           by = .(dataset, de, cond)][order(dataset, de, match(cond, COND_LEVELS))]
+kable(tab3, digits = 4, caption =
+      "Per-gene variance of CP10K+log1p expression across conditions, split by ground-truth DE status.")
+```
+
+```{r p3-ratio, fig.height = 5}
+ggplot(gl[cond != "A_2grp"], aes(l2ratio, colour = cond_f(cond))) +
+    geom_line(stat = "density", linewidth = .9) +
+    geom_vline(xintercept = 0, colour = AXIS, linewidth = .4) +
+    facet_grid(ds_lab ~ de) +
+    scale_colour_manual(values = setNames(COND_COL, COND_LABELS), name = NULL) +
+    coord_cartesian(xlim = c(-.6, .6)) +
+    labs(title = "Change in per-gene normalized variance when groups are added",
+         subtitle = "Non-DE genes are completely unaffected; DE genes gain a little variance, always in the same direction",
+         x = expression(log[2]~(var[condition] / var[anchor])), y = "density") +
+    theme_report()
+```
+
+### Why variance is well-behaved: it is additive and monotone
+
+Adding a group can only add **between-group** variance on top of an unchanged
+**within-group** variance ($SS_T = SS_W + SS_B$). A gene that was variable stays
+variable; nothing can cancel. The decomposition below uses **all** cells of the
+batch, so it is free of subsampling noise.
+
+```{r p3-anova, fig.height = 5}
+dec <- melt(genes, id.vars = c("dataset", "ds_lab", "batch", "gene", "n_de_groups"),
+            measure.vars = c(paste0("var_between_K", 2:4), paste0("var_within_K", 2:4)),
+            variable.name = "component", value.name = "variance")
+dec[, K := sub(".*_K", "", as.character(component))]
+dec[, part := factor(ifelse(grepl("between", component), "between-group", "within-group"),
+                     levels = names(PART_COL))]
+dec[, de := ifelse(n_de_groups == 0, "non-DE gene", "DE gene")]
+decl <- dec[, .(variance = median(variance)), by = .(ds_lab, de, K, part)]
+ggplot(decl, aes(paste(K, "groups"), variance, fill = part)) +
+    geom_col(width = .68, colour = SURFACE, linewidth = .9) +
+    facet_grid(ds_lab ~ de) +
+    scale_fill_manual(values = PART_COL, name = NULL) +
+    scale_y_continuous(expand = expansion(mult = c(0, .06))) +
+    labs(title = "ANOVA decomposition of normalized variance (median gene, all cells of the batch)",
+         subtitle = "Within-group variance is flat; each added group only adds between-group variance",
+         x = NULL, y = "variance of CP10K + log1p expression") +
+    theme_report()
+decw <- dcast(dec, dataset + de + gene + batch + K ~ part, value.var = "variance")
+setnames(decw, c("between-group", "within-group"), c("between", "within"))
+kable(decw[, .(between = median(between), within = median(within),
+               `between %` = 100 * median(between / (between + within))),
+           by = .(dataset, de, K)][order(dataset, de, K)],
+      digits = 4, caption = "Median per-gene variance components for K = 2, 3, 4 groups.")
+```
+
+## Part 4 — consequence for ranking stability
+
+The quantity that matters for gene selection is not a single correlation or a
+single variance but the **ranking** they induce. Below: the overlap of the
+top-ranked *pair* set (anglemania's object) and the top-ranked *gene-by-variance*
+set (HVG's object), each measured against its own anchor, with the noise floor
+alongside.
+
+```{r p4-jaccard, fig.height = 5.6}
+gene_jacc <- rbindlist(lapply(c(500, 2000), function(topn) {
+    gl[, {
+        a <- gene[order(-var_anchor)][seq_len(min(topn, .N))]
+        b <- gene[order(-var_norm)][seq_len(min(topn, .N))]
+        .(topN = topn,
+          jaccard = length(intersect(a, b)) / length(union(a, b)))
+    }, by = .(dataset, ds_lab, batch, cond)]
+}))[cond != "A_2grp"]
+
+pair_jacc <- jacc[rank_by == "largest_abs_r", .(jaccard = mean(jaccard)),
+                  by = .(dataset, ds_lab, cond, topN)]
+gene_jaccm <- gene_jacc[, .(jaccard = mean(jaccard)), by = .(dataset, ds_lab, cond, topN)]
+
+rank_df <- rbind(
+    pair_jacc[topN %in% c(1000, 10000)][, .(dataset, ds_lab, cond, jaccard,
+        what = paste0("gene PAIRS by |r|\ntop ", format(topN, big.mark = ",", trim = TRUE)))],
+    gene_jaccm[, .(dataset, ds_lab, cond, jaccard,
+        what = paste0("GENES by variance\ntop ", format(topN, big.mark = ",", trim = TRUE)))])
+rank_df[, what := factor(what, levels = unique(what))]
+
+ggplot(rank_df, aes(cond_s(cond), jaccard, fill = cond_s(cond))) +
+    geom_col(width = .68) +
+    geom_text(aes(label = number(jaccard, accuracy = .01)), vjust = -.45,
+              colour = INK2, size = 3.3) +
+    facet_grid(ds_lab ~ what) +
+    scale_fill_manual(values = setNames(COND_COL, COND_SHORT), name = NULL) +
+    scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0, .12))) +
+    labs(title = "Ranking stability: pair correlations vs gene variances",
+         subtitle = "Jaccard against the 2-group anchor. The left bar of each panel is the sampling-noise floor.",
+         x = X_NGROUPS, y = "Jaccard vs anchor ranking") +
+    theme_report() + theme(legend.position = "none")
+```
+
+```{r p4-table}
+rel <- rank_df[, .(noise_floor = jaccard[cond == "Arep_2grp"],
+                   three_groups = jaccard[cond == "B_3grp"],
+                   four_groups  = jaccard[cond == "C_4grp"]), by = .(dataset, what)]
+rel[, `% of noise-floor overlap retained at 4 groups` := 100 * four_groups / noise_floor]
+kable(rel, digits = 3, caption =
+      "Ranking overlap with the 2-group anchor. The last column normalises out the sampling noise: 100% means adding two groups cost nothing beyond resampling.")
+```
+
+## Summary
+
+```{r summary-numbers, echo = FALSE}
+ret <- function(kind, n) rel[grepl(kind, what, fixed = TRUE) &
+                             grepl(n, what, fixed = TRUE) &
+                             dataset == "strongDE_deLoc0.6"
+                            ][1][["% of noise-floor overlap retained at 4 groups"]]
+s <- tab1[dataset == "strongDE_deLoc0.6" & stratum == "neg_anchor"]
+z <- tab2[dataset == "strongDE_deLoc0.6" & stratum == "both_nonDE"]
+v <- tab3[dataset == "strongDE_deLoc0.6" & de == "non-DE gene"]
+```
+
+**1. Strongly anti-correlated pairs lose about half their correlation.** In the
+strong-DE simulation the 20,000 most anti-correlated pairs move by a median
+`r number(s[cond == "Arep_2grp"][["median |dr| vs anchor"]], accuracy = .001)` under
+pure resampling, but by
+`r number(s[cond == "B_3grp"][["median |dr| vs anchor"]], accuracy = .001)` with a
+third group and
+`r number(s[cond == "C_4grp"][["median |dr| vs anchor"]], accuracy = .001)` with a
+fourth — roughly **8× and 13× the noise floor**. Median *r* goes
+`r number(s[cond == "A_2grp"]$median_r, accuracy = .001)` →
+`r number(s[cond == "B_3grp"]$median_r, accuracy = .001)` →
+`r number(s[cond == "C_4grp"]$median_r, accuracy = .001)`. The *direction*
+survives (few sign flips); the *magnitude* does not. The cause is structural: the
+between-group component of a 2-group correlation is $\pm1$ by construction, and
+only stops being degenerate once a third group exists.
+
+**2. Uncorrelated pairs are essentially immune.** For pairs that are
+uncorrelated *by construction* (both genes non-DE in every group), the spread of
+*r* is identical in all four conditions — sd
+`r number(z[cond == "Arep_2grp"]$sd_r, accuracy = .0001)` at 2 groups vs
+`r number(z[cond == "C_4grp"]$sd_r, accuracy = .0001)` at 4 — and the median
+|Δr| is the same as the noise floor. For the observed-zero selection
+(`zero_anchor`) the outward regression is likewise ~the noise floor, with only a
+~16% excess in spread at 4 groups. **Adding groups does not manufacture
+correlation; it only dilutes existing DE-driven correlation.** So the composition
+effect acts on the signal and leaves the noise where it is — which is exactly the
+worst case for a z-score ranking, whose null is that same noise.
+
+**3. Normalized variance barely moves, and only ever upward.** Non-DE genes
+show a median variance ratio of
+`r number(v[cond == "C_4grp"][["median var ratio vs anchor"]], accuracy = .001)` at
+4 groups (i.e. no change), with Spearman correlation
+`r number(v[cond == "C_4grp"][["Spearman vs anchor"]], accuracy = .001)` against the
+anchor — the same as the noise floor. DE genes *gain* variance
+(`r number(tab3[dataset == "strongDE_deLoc0.6" & de == "DE gene" & cond == "C_4grp"][["median var ratio vs anchor"]], accuracy = .001)`×
+at 4 groups), because each added group can only add between-group variance to an
+unchanged within-group variance.
+
+**4. This is the mechanism behind the angl-vs-HVG stability gap.** Variance is
+*additive and monotone* under adding a group; correlation is a *normalized*
+quantity whose numerator and denominator both change, and whose between-group
+geometry is degenerate at K = 2. A gene that is variable stays variable, so the
+variance ranking largely survives; a pair that is extreme in one composition
+need not be extreme in another, so the pair ranking turns over. Going from 2 to 4
+groups in the strong-DE simulation retains
+`r number(ret("PAIRS", "1,000"), accuracy = 1)`% of the top-1,000 *pair* overlap
+that resampling alone would have produced, against
+`r number(ret("variance", "2,000"), accuracy = 1)`% of the top-2,000
+*gene-by-variance* overlap. The gap narrows for smaller gene sets — the top-500
+variance set retains `r number(ret("variance", "500"), accuracy = 1)`% — so the
+variance ranking is *more* robust, not immune. See the Part 4 table.
+
+## Caveats
+
+* Only one 2-group base is used (Group1 + Group2), and groups are added in a
+  fixed order. Different group subsets give the same qualitative picture but the
+  exact numbers depend on which cell types are involved.
+* Cell counts are held constant *in total* (960), so cells *per group* fall as
+  groups are added. The ANOVA panels (Parts 1 and 3), computed on all cells of
+  the batch with no subsampling, show the same shrinkage, so this is not a
+  per-group-*n* artefact.
+* splatter models a cell type as a set of multiplicative DE factors on a shared
+  mean-expression profile. Real cell types differ in more structured ways, so
+  the absolute correlation values here are not meant to match real data — the
+  comparison *between conditions* is the point.
+* The `baseline_deLoc0.1` simulation, which the mixed-effects stability
+  benchmark uses, contains almost no cell-level correlation signal: the strongest
+  correlation among ~43M pairs is |r| ≈ 0.28, and pairs of DE genes are
+  statistically indistinguishable from pairs of non-DE genes (Part 2 table).
+  Whatever anglemania ranks on in that dataset is close to pure noise, which is
+  worth keeping in mind when interpreting its stability there.
+
+```{r session, echo = FALSE}
+sessionInfo()
+```

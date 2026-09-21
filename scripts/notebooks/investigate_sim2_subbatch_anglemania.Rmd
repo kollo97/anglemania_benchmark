@@ -1,0 +1,298 @@
+---
+title: "investigate_sim2_subbatch_anglemania"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.height = 8)
+knitr::opts_chunk$set(fig.width = 12)
+```
+
+## Background
+
+anglemania selected only **2 genes** for `sim2_subbatch_raw` (instead of 2000). The
+suspected cause is the strict gene intersection step: anglemania requires a gene to be
+expressed in ≥1 cell in **every** batch. With 16 sub-batches (Batch1Sub1…Batch4Sub4),
+tiny/sparse sub-batches may express very few genes, collapsing the intersection.
+
+**sim2 design (from sim2.R):**
+
+- 4 main batches × 4 sub-batches = 16 sub-batches total
+- Relative library sizes: Batch1=1.0, Batch2=0.7, Batch3=0.6, **Batch4=0.3** (very sparse)
+- Sub-batch proportions: Batch4 sub-batches at 35%, 35%, **15%, 15%** → ~225 cells in smallest
+- Sub-batch noise added per sub-batch via `splatSimulate(lib.loc=8, lib.scale=0.5)`
+
+```{r libraries, message=FALSE, warning=FALSE}
+.libPaths(.Library)
+library(anndataR)
+library(SingleCellExperiment)
+library(Matrix)
+library(tidyverse)
+library(ggplot2)
+```
+
+## 1. Load Data
+
+```{r load-data}
+h5ad_path <- "/local/Projects/AAkalin_Neuroblastoma/data/Luecken_Theis_NatMethods_2021_benchmarking/datasets/sim2_subbatch_raw.h5ad"
+sce <- anndataR::read_h5ad(h5ad_path, to = "SingleCellExperiment")
+
+cat("Dimensions:", nrow(sce), "genes x", ncol(sce), "cells\n")
+cat("obs columns:", paste(colnames(colData(sce)), collapse = ", "), "\n")
+```
+
+```{r identify-batch-col}
+# Identify batch column (pipeline uses batch_key: "batch")
+# From sim2.R colData: Batch, SubBatch, Sub, Group, etc.
+cd <- as.data.frame(colData(sce))
+head(cd)
+```
+
+```{r set-batch-cols}
+# Determine correct column names based on what's in the data
+batch_col <- if ("batch" %in% colnames(cd)) "batch" else if ("SubBatch" %in% colnames(cd)) "SubBatch" else stop("No batch column found")
+main_batch_col <- if ("Batch" %in% colnames(cd)) "Batch" else NULL
+
+cat("Using batch column:", batch_col, "\n")
+cat("Unique batches:", length(unique(cd[[batch_col]])), "\n")
+sort(unique(cd[[batch_col]]))
+```
+
+## 2. Cells per Batch
+
+```{r cells-per-batch, fig.cap="Number of cells per sub-batch. Unequal sizes reflect the simulation design."}
+cells_per_batch <- cd %>%
+    count(.data[[batch_col]], name = "n_cells") %>%
+    arrange(.data[[batch_col]])
+
+ggplot(cells_per_batch, aes(x = .data[[batch_col]], y = n_cells)) +
+    geom_col(fill = "steelblue") +
+    geom_text(aes(label = n_cells), vjust = -0.3, size = 3) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(
+        title = "Cells per sub-batch (sim2_subbatch_raw)",
+        x = "Sub-batch", y = "Number of cells"
+    )
+```
+
+```{r cells-per-main-batch, eval=!is.null(main_batch_col)}
+if (!is.null(main_batch_col)) {
+    cells_per_main <- cd %>%
+        count(.data[[main_batch_col]], name = "n_cells")
+
+    ggplot(cells_per_main, aes(x = .data[[main_batch_col]], y = n_cells)) +
+        geom_col(fill = "darkorange") +
+        geom_text(aes(label = n_cells), vjust = -0.3, size = 3) +
+        theme_bw() +
+        labs(
+            title = "Cells per main batch",
+            x = "Batch", y = "Number of cells"
+        )
+}
+```
+
+## 3. Genes Expressed per Batch
+
+For each sub-batch, count genes where **sum of counts > 1** (user request) and also
+genes with **any expression > 0** (what anglemania uses for prefiltering).
+
+```{r genes-per-batch}
+batches <- sort(unique(cd[[batch_col]]))
+count_mat <- counts(sce)
+
+gene_stats <- do.call(rbind, lapply(batches, function(b) {
+    batch_cells <- rownames(cd)[cd[[batch_col]] == b]
+    mat <- count_mat[, batch_cells, drop = FALSE]
+    data.frame(
+        batch = b,
+        n_cells = length(batch_cells),
+        n_genes_any_expr = sum(Matrix::rowSums(mat > 0) >= 1),
+        n_genes_sum_gt1  = sum(Matrix::rowSums(mat) > 1)
+    )
+}))
+
+gene_stats
+```
+
+```{r plot-genes-any-expr, fig.cap="Number of genes with any expression (≥1 cell with count > 0) per sub-batch. This is what anglemania uses for per-batch gene prefiltering."}
+gene_stats_long <- gene_stats %>%
+    pivot_longer(
+        cols = c(n_genes_any_expr, n_genes_sum_gt1),
+        names_to = "metric",
+        values_to = "n_genes"
+    ) %>%
+    mutate(metric = recode(metric,
+        n_genes_any_expr = "rowSums > 0 (≥1 cell expressed)",
+        n_genes_sum_gt1  = "total sum > 1"
+    ))
+
+ggplot(gene_stats_long, aes(x = batch, y = n_genes, fill = metric)) +
+    geom_col(position = "dodge") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(
+        title = "Number of expressed genes per sub-batch",
+        x = "Sub-batch", y = "Number of genes",
+        fill = "Criterion"
+    ) +
+    scale_fill_manual(values = c("steelblue", "tomato"))
+```
+
+## 4. Gene Intersection Analysis
+
+Simulate what anglemania does: take the strict intersection of expressed gene sets
+across all sub-batches. Show how the intersection size shrinks as batches are added.
+
+```{r gene-sets}
+gene_sets <- lapply(batches, function(b) {
+    batch_cells <- rownames(cd)[cd[[batch_col]] == b]
+    mat <- count_mat[, batch_cells, drop = FALSE]
+    rownames(mat)[Matrix::rowSums(mat > 0) >= 1]
+})
+names(gene_sets) <- batches
+
+cat("Gene set sizes per batch:\n")
+sizes <- sapply(gene_sets, length)
+sort(sizes)
+```
+
+```{r cumulative-intersection, fig.cap="How the gene intersection shrinks as sub-batches are added. Batches are ordered from largest to smallest expressed gene set. The final intersection is what anglemania works with."}
+# Order batches from most to fewest expressed genes (best case → worst case)
+ordered_large_to_small <- names(sort(sizes, decreasing = TRUE))
+cum_intersect_large_first <- sapply(seq_along(ordered_large_to_small), function(i) {
+    length(Reduce(intersect, gene_sets[ordered_large_to_small[1:i]]))
+})
+
+# Also show natural alphabetical order
+cum_intersect_alpha <- sapply(seq_along(batches), function(i) {
+    length(Reduce(intersect, gene_sets[batches[1:i]]))
+})
+
+df_cum <- bind_rows(
+    data.frame(
+        n_batches = seq_along(ordered_large_to_small),
+        intersection_size = cum_intersect_large_first,
+        order = "Largest gene set first"
+    ),
+    data.frame(
+        n_batches = seq_along(batches),
+        intersection_size = cum_intersect_alpha,
+        order = "Alphabetical order"
+    )
+)
+
+ggplot(df_cum, aes(x = n_batches, y = intersection_size, color = order)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    theme_bw() +
+    labs(
+        title = "Cumulative gene intersection as sub-batches are added",
+        x = "Number of sub-batches included",
+        y = "Intersection size (# genes)",
+        color = "Batch order"
+    ) +
+    scale_color_manual(values = c("steelblue", "tomato")) +
+    geom_vline(xintercept = length(batches), linetype = "dashed", color = "gray50") +
+    annotate("text", x = length(batches) - 0.5,
+             y = max(df_cum$intersection_size) * 0.8,
+             label = paste0("Final: ", tail(cum_intersect_large_first, 1)),
+             hjust = 1, color = "steelblue")
+```
+
+```{r show-bottleneck-batches}
+# Which batch(es) cause the biggest drop in intersection?
+drops <- diff(cum_intersect_large_first)
+bottleneck_idx <- which(drops == min(drops))
+cat("Biggest intersection drop when adding batch #", bottleneck_idx + 1, ":\n")
+cat("  Batch:", ordered_large_to_small[bottleneck_idx + 1], "\n")
+cat("  Drop:", drops[bottleneck_idx], "genes\n")
+cat("  Gene set size of this batch:", sizes[ordered_large_to_small[bottleneck_idx + 1]], "\n")
+```
+
+## 5. Total Count Distribution in Sparse Sub-batches
+
+Look at the distribution of per-gene total counts in the smallest sub-batches
+to understand why genes drop out.
+
+```{r sparse-batch-counts, fig.cap="Distribution of per-gene total count sums in the 4 smallest sub-batches. Genes with sum=0 are unexpressed and dropped from the intersection."}
+smallest_batches <- names(sort(sizes))[1:4]
+
+count_dist <- do.call(rbind, lapply(smallest_batches, function(b) {
+    batch_cells <- rownames(cd)[cd[[batch_col]] == b]
+    mat <- count_mat[, batch_cells, drop = FALSE]
+    gene_sums <- Matrix::rowSums(mat)
+    data.frame(
+        batch = b,
+        gene_sum = as.numeric(gene_sums)
+    )
+}))
+
+ggplot(count_dist, aes(x = gene_sum + 1)) +
+    geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+    facet_wrap(~batch, scales = "free_y") +
+    scale_x_log10() +
+    theme_bw() +
+    labs(
+        title = "Per-gene count sum distribution in the 4 smallest sub-batches",
+        x = "Total count sum per gene (log10 scale, +1)",
+        y = "Number of genes"
+    ) +
+    geom_vline(xintercept = 1 + 1, linetype = "dashed", color = "tomato") +
+    annotate("text", x = 2.5, y = Inf, vjust = 1.5,
+             label = "sum > 1 threshold", color = "tomato", size = 3)
+```
+
+```{r zero-gene-fraction}
+zero_frac <- do.call(rbind, lapply(batches, function(b) {
+    batch_cells <- rownames(cd)[cd[[batch_col]] == b]
+    mat <- count_mat[, batch_cells, drop = FALSE]
+    gene_sums <- Matrix::rowSums(mat)
+    data.frame(
+        batch = b,
+        n_cells = length(batch_cells),
+        n_genes_total = nrow(mat),
+        n_genes_zero  = sum(gene_sums == 0),
+        frac_zero = mean(gene_sums == 0)
+    )
+})) %>% arrange(desc(frac_zero))
+
+zero_frac
+```
+
+```{r plot-zero-frac, fig.cap="Fraction of genes with zero total counts per sub-batch. High zero fraction in small/sparse sub-batches directly limits the intersection."}
+ggplot(zero_frac, aes(x = reorder(batch, frac_zero), y = frac_zero)) +
+    geom_col(fill = "tomato") +
+    geom_text(aes(label = scales::percent(frac_zero, accuracy = 0.1)),
+              hjust = -0.1, size = 3) +
+    coord_flip() +
+    theme_bw() +
+    scale_y_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.15))) +
+    labs(
+        title = "Fraction of genes with zero total counts per sub-batch",
+        x = "Sub-batch", y = "Fraction of genes with sum = 0"
+    )
+```
+
+## 6. Summary
+
+```{r summary}
+final_intersection_size <- length(Reduce(intersect, gene_sets))
+cat("Total genes in dataset:", nrow(sce), "\n")
+cat("Number of sub-batches:", length(batches), "\n")
+cat("Smallest sub-batch:", names(which.min(sizes)), "with", min(sizes), "expressed genes\n")
+cat("Strict intersection across all", length(batches), "sub-batches:", final_intersection_size, "genes\n")
+cat("\nConclusion: anglemania's strict gene intersection across", length(batches),
+    "sub-batches reduces the candidate gene pool to", final_intersection_size,
+    "genes before any angle computation, explaining the 2-gene output.\n")
+```

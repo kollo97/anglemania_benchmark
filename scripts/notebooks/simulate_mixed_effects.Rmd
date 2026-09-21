@@ -1,0 +1,383 @@
+---
+title: "Simulate mixed-effects scenarios for gene selection stability"
+date: "`r Sys.Date()`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/")})
+output:
+    html_document:
+      toc: yes
+      toc_float:
+        collapsed: no
+        smooth_scroll: no
+      df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Base scenario: `batch.facLoc0.3_de.facLoc0.1_nbatch4_ngroup4_groupCells1000`
+(facScale0.1) -- 4 batches, 4 cell-type groups, moderate batch effect,
+moderate DE signal. This notebook derives all perturbed datasets needed for
+the anglemania vs HVG gene-selection stability analysis:
+
+1. **Leave-one-group-out (LOGO)** -- drop each of the 4 groups from the base
+   simulation, one at a time (4 datasets).
+2. **Leave-one-batch-out (LOBO)** -- drop each of the 4 batches from the base
+   simulation, one at a time (4 datasets).
+3. **Sparsity** -- a fresh splatter simulation with the same
+   batch.facLoc/de.facLoc/nbatch/ngroup/groupCells parameters, but with
+   `dropout.mid=3.5, dropout.shape=-1` (same dropout settings used for the
+   `ngroup=3` reference in `with_dropout/own_sim`, which lands at ~88%
+   sparsity there).
+4. **Composition skew** -- unlike LOGO, all 4 groups stay present, just
+   reweighted by subsampling cells per group per batch: (a) a graded skew
+   (Group1/2/3/4 = 10/20/30/40%) and (b) one group made "rare" (Group1 = 1%,
+   Groups 2/3/4 split the remaining 99% evenly). Both keep the same
+   per-batch cell budget (`groupCells` = 1000) as the baseline, so total
+   dataset size is unchanged -- only the group proportions differ.
+
+The unperturbed baseline itself already exists at
+`h5ad/facScale0.1/batch.facLoc0.3_de.facLoc0.1_nbatch4_ngroup4_groupCells1000.h5ad`
+and is referenced directly (not copied). Only the perturbed datasets are
+written to `h5ad/mixed_effects/`. All outputs are collected into a single
+samplesheet for the benchmark pipeline.
+
+```{r libraries, message=FALSE, warning=FALSE}
+.libPaths(.Library)
+suppressPackageStartupMessages({
+    library(splatter)
+    library(stringr)
+    library(dplyr)
+    library(tidyverse)
+    library(tibble)
+    library(anndataR)
+    library(SingleCellExperiment)
+})
+```
+
+```{r paths}
+BASELINE_H5AD <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/facScale0.1/batch.facLoc0.3_de.facLoc0.1_nbatch4_ngroup4_groupCells1000.h5ad"
+OUTDIR <- "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/mixed_effects"
+dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
+
+BASE_PARAMS <- list(
+    batch.facLoc = 0.3,
+    de.facLoc = 0.1,
+    nbatch = 4,
+    ngroup = 4,
+    groupCells = 1000,
+    batch.facScale = 0.1,
+    de.facScale = 0.2,
+    nGenes = 10000
+)
+```
+
+## Simulation / save helpers
+
+Reused verbatim from `simulate_single_cell_with_dropout.rmd` (dropout
+generation) plus a generalization of its `save_sim()` helper that can save
+any `SingleCellExperiment` (not just a fresh `splatSimulate()` output) --
+needed to write out the LOGO/LOBO cell subsets of the baseline.
+
+```{r helpers}
+splatparams_to_list <- function(obj) {
+    p <- metadata(obj)$Params
+    slots <- slotNames(p)
+    l <- setNames(lapply(slots, function(s) slot(p, s)), slots)
+    return(l)
+}
+
+save_sce_as_h5ad <- function(sce, outfile, uns = NULL) {
+    counts_mat <- t(counts(sce)) %>% as.matrix()
+    obs_df <- colData(sce) %>% as.data.frame()
+    var_df <- rowData(sce) %>% as.data.frame()
+    if (is.null(uns)) uns <- S4Vectors::metadata(sce)
+
+    message("Creating AnnData object")
+    adata <- anndataR::AnnData(
+        X = counts_mat,
+        obs = obs_df,
+        var = var_df,
+        uns = uns
+    )
+    message(paste0("Saving ", outfile))
+    anndataR::write_h5ad(adata, path = outfile, mode = "w", compression = "none")
+}
+
+create_and_save_sim <- function(
+    sample_name,
+    ngroup,
+    nbatch,
+    groupCells,
+    batch.facLoc,
+    de.facLoc,
+    batch.facScale = 0.1,
+    de.facScale = 0.2,
+    nGenes = 10000,
+    dropout.mid,
+    dropout.shape,
+    dropout.type = "experiment",
+    outfile,
+    ...) {
+    if (!file.exists(outfile)) {
+        print(paste0("Processing ", sample_name, " with params:"))
+        print(knitr::kable(cbind(ngroup, nbatch, batch.facLoc, de.facLoc, dropout.mid, dropout.shape)))
+        set.seed(42)
+        message("Simulating data")
+
+        sim <- splatSimulate(
+            batchCells = rep(groupCells * ngroup, nbatch),
+            group.prob = rep(1 / ngroup, ngroup),
+            batch.facLoc = batch.facLoc,
+            batch.facScale = batch.facScale,
+            batch.rmEffect = ifelse(batch.facLoc == 0, TRUE, FALSE),
+            method = "groups",
+            verbose = FALSE,
+            out.prob = 0.001,
+            de.prob = 0.1,
+            de.facLoc = de.facLoc,
+            de.facScale = ifelse(de.facLoc == 0, 0, de.facScale),
+            bcv.common = 0.1,
+            nGenes = nGenes,
+            dropout.mid = dropout.mid,
+            dropout.shape = dropout.shape,
+            dropout.type = dropout.type,
+            ...
+        )
+
+        save_sce_as_h5ad(sim, outfile, uns = splatparams_to_list(sim))
+        message(paste0("Saved ", outfile))
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+}
+
+compute_sparsity <- function(h5ad_path) {
+    ad <- anndataR::read_h5ad(h5ad_path)
+    x <- ad$X
+    100 * Matrix::mean(x == 0)
+}
+```
+
+## 1. Sparsity scenario: fresh dropout simulation (ngroup=4)
+
+```{r sparsity-sim}
+dropout.mid <- 3.5
+dropout.shape <- -1
+
+sparsity_sample_name <- with(BASE_PARAMS, paste0(
+    "batch.facLoc", batch.facLoc, "_de.facLoc", de.facLoc,
+    "_nbatch", nbatch, "_ngroup", ngroup, "_groupCells", groupCells,
+    "_dropout.mid", dropout.mid, "_dropout.shape", dropout.shape
+))
+sparsity_outfile <- file.path(OUTDIR, paste0(sparsity_sample_name, ".h5ad"))
+
+create_and_save_sim(
+    sample_name = sparsity_sample_name,
+    ngroup = BASE_PARAMS$ngroup,
+    nbatch = BASE_PARAMS$nbatch,
+    groupCells = BASE_PARAMS$groupCells,
+    batch.facLoc = BASE_PARAMS$batch.facLoc,
+    de.facLoc = BASE_PARAMS$de.facLoc,
+    batch.facScale = BASE_PARAMS$batch.facScale,
+    de.facScale = BASE_PARAMS$de.facScale,
+    nGenes = BASE_PARAMS$nGenes,
+    dropout.mid = dropout.mid,
+    dropout.shape = dropout.shape,
+    outfile = sparsity_outfile
+)
+```
+
+## 2. Load baseline and check Batch / Group columns
+
+```{r load-baseline}
+baseline_sce <- anndataR::read_h5ad(BASELINE_H5AD, to = "SingleCellExperiment")
+baseline_obs <- colData(baseline_sce) %>% as.data.frame()
+
+stopifnot(all(c("Batch", "Group") %in% colnames(baseline_obs)))
+cat("Groups:", paste(sort(unique(baseline_obs$Group)), collapse = ", "), "\n")
+cat("Batches:", paste(sort(unique(baseline_obs$Batch)), collapse = ", "), "\n")
+table(baseline_obs$Batch, baseline_obs$Group)
+```
+
+## 3. Leave-one-group-out (LOGO)
+
+```{r logo}
+groups <- sort(unique(baseline_obs$Group))
+
+logo_rows <- lapply(groups, function(g) {
+    sample_name <- with(BASE_PARAMS, paste0(
+        "batch.facLoc", batch.facLoc, "_de.facLoc", de.facLoc,
+        "_nbatch", nbatch, "_ngroup", ngroup, "_groupCells", groupCells,
+        "_dropGroup", g
+    ))
+    outfile <- file.path(OUTDIR, paste0(sample_name, ".h5ad"))
+    if (!file.exists(outfile)) {
+        keep <- baseline_obs$Group != g
+        sub_sce <- baseline_sce[, keep]
+        save_sce_as_h5ad(sub_sce, outfile)
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+    data.frame(
+        sample_name = sample_name,
+        file_path = outfile,
+        perturbation_type = "logo",
+        perturbation_detail = g,
+        stringsAsFactors = FALSE
+    )
+})
+logo_rows <- bind_rows(logo_rows)
+logo_rows
+```
+
+## 4. Leave-one-batch-out (LOBO)
+
+```{r lobo}
+batches <- sort(unique(baseline_obs$Batch))
+
+lobo_rows <- lapply(batches, function(b) {
+    sample_name <- with(BASE_PARAMS, paste0(
+        "batch.facLoc", batch.facLoc, "_de.facLoc", de.facLoc,
+        "_nbatch", nbatch, "_ngroup", ngroup, "_groupCells", groupCells,
+        "_dropBatch", b
+    ))
+    outfile <- file.path(OUTDIR, paste0(sample_name, ".h5ad"))
+    if (!file.exists(outfile)) {
+        keep <- baseline_obs$Batch != b
+        sub_sce <- baseline_sce[, keep]
+        save_sce_as_h5ad(sub_sce, outfile)
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+    data.frame(
+        sample_name = sample_name,
+        file_path = outfile,
+        perturbation_type = "lobo",
+        perturbation_detail = b,
+        stringsAsFactors = FALSE
+    )
+})
+lobo_rows <- bind_rows(lobo_rows)
+lobo_rows
+```
+
+## 5. Composition skew
+
+Unlike LOGO, every group stays present -- cells are subsampled per group
+*within each batch* to hit the target proportions, keeping the same
+per-batch total cell budget (`groupCells` = 1000) as the baseline so batch
+structure and dataset size are otherwise unchanged.
+
+```{r composition-helper}
+subset_composition <- function(sce, obs, target_props, budget, seed = 42) {
+    set.seed(seed)
+    stopifnot(abs(sum(target_props) - 1) < 1e-8)
+    batches <- sort(unique(obs$Batch))
+    keep_idx <- integer(0)
+    for (b in batches) {
+        batch_idx <- which(obs$Batch == b)
+        batch_group <- obs$Group[batch_idx]
+        for (g in names(target_props)) {
+            n_target <- round(target_props[[g]] * budget)
+            g_idx <- batch_idx[batch_group == g]
+            n_draw <- min(n_target, length(g_idx))
+            if (n_draw < n_target) {
+                warning(sprintf("Batch %s, %s: wanted %d cells, only %d available", b, g, n_target, length(g_idx)))
+            }
+            keep_idx <- c(keep_idx, sample(g_idx, n_draw))
+        }
+    }
+    sce[, sort(keep_idx)]
+}
+
+composition_scenarios <- list(
+    skewed10_20_30_40 = c(Group1 = 0.10, Group2 = 0.20, Group3 = 0.30, Group4 = 0.40),
+    rareGroup1_1pct    = c(Group1 = 0.01, Group2 = 0.33, Group3 = 0.33, Group4 = 0.33)
+)
+```
+
+```{r composition}
+composition_rows <- lapply(names(composition_scenarios), function(scenario_name) {
+    target_props <- composition_scenarios[[scenario_name]]
+    sample_name <- with(BASE_PARAMS, paste0(
+        "batch.facLoc", batch.facLoc, "_de.facLoc", de.facLoc,
+        "_nbatch", nbatch, "_ngroup", ngroup, "_groupCells", groupCells,
+        "_composition_", scenario_name
+    ))
+    outfile <- file.path(OUTDIR, paste0(sample_name, ".h5ad"))
+    if (!file.exists(outfile)) {
+        sub_sce <- subset_composition(baseline_sce, baseline_obs, target_props, budget = BASE_PARAMS$groupCells)
+        save_sce_as_h5ad(sub_sce, outfile)
+    } else {
+        message(paste0(outfile, " already exists. Skipping..."))
+    }
+    data.frame(
+        sample_name = sample_name,
+        file_path = outfile,
+        perturbation_type = "composition",
+        perturbation_detail = paste(names(target_props), paste0(round(target_props * 100), "%"), sep = "=", collapse = ";"),
+        stringsAsFactors = FALSE
+    )
+})
+composition_rows <- bind_rows(composition_rows)
+composition_rows
+```
+
+## 6. Assemble samplesheet
+
+```{r samplesheet}
+baseline_sample_name <- with(BASE_PARAMS, paste0(
+    "batch.facLoc", batch.facLoc, "_de.facLoc", de.facLoc,
+    "_nbatch", nbatch, "_ngroup", ngroup, "_groupCells", groupCells
+))
+
+baseline_row <- data.frame(
+    sample_name = baseline_sample_name,
+    file_path = BASELINE_H5AD,
+    perturbation_type = "baseline",
+    perturbation_detail = NA_character_,
+    stringsAsFactors = FALSE
+)
+
+sparsity_row <- data.frame(
+    sample_name = sparsity_sample_name,
+    file_path = sparsity_outfile,
+    perturbation_type = "sparsity",
+    perturbation_detail = paste0("dropout.mid", dropout.mid),
+    stringsAsFactors = FALSE
+)
+
+samplesheet <- bind_rows(baseline_row, logo_rows, lobo_rows, sparsity_row, composition_rows) %>%
+    mutate(
+        batch.facLoc = BASE_PARAMS$batch.facLoc,
+        de.facLoc = BASE_PARAMS$de.facLoc,
+        nbatch = BASE_PARAMS$nbatch,
+        ngroup = BASE_PARAMS$ngroup,
+        groupCells = BASE_PARAMS$groupCells
+    )
+
+samplesheet
+```
+
+## 7. Sparsity check across all samples
+
+```{r sparsity-check}
+samplesheet$sparsity_pct <- vapply(samplesheet$file_path, compute_sparsity, numeric(1))
+samplesheet %>% select(sample_name, perturbation_type, perturbation_detail, sparsity_pct)
+```
+
+```{r write-samplesheet}
+samplesheet_path <- file.path(OUTDIR, "samplesheet.tsv")
+write.table(samplesheet, file = samplesheet_path, sep = "\t", row.names = FALSE, quote = FALSE)
+cat("Wrote samplesheet to", samplesheet_path, "\n")
+```
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

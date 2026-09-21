@@ -31,7 +31,7 @@ library(rhdf5)
 library(httpgd)
 library(plotly)
 library(pbapply)
-source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/R/ggplot_utils.R")
 library(glue)
 library(corrplot)
 today <- function() {

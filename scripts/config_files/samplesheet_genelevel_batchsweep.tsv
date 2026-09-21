@@ -1,0 +1,4 @@
+sample_name	file_path	batch_facLoc
+batch.facLoc0.1_de.facLoc0.1_nbatch4_ngroup4_groupCells1000	/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/facScale0.1/batch.facLoc0.1_de.facLoc0.1_nbatch4_ngroup4_groupCells1000.h5ad	0.1
+batch.facLoc0.3_de.facLoc0.1_nbatch4_ngroup4_groupCells1000	/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/facScale0.1/batch.facLoc0.3_de.facLoc0.1_nbatch4_ngroup4_groupCells1000.h5ad	0.3
+batch.facLoc0.6_de.facLoc0.1_nbatch4_ngroup4_groupCells1000	/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/facScale0.1/batch.facLoc0.6_de.facLoc0.1_nbatch4_ngroup4_groupCells1000.h5ad	0.6

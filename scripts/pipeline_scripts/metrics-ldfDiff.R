@@ -28,7 +28,7 @@ option_list <- list(
     make_option(c("-g", "--gene_selection"),
                             default = NA,
                             type = "character",
-                            help = "gene selection method. One of ['hvg', 'angl', 'full', 'rand', 'topbtvr', 'bottombtvr']"),
+                            help = "gene selection method. One of ['hvg', 'angl', 'anglmean', 'anglmod05', 'anglmod1', 'anglsiggene', 'anglgene', 'anglgene_nobin', 'anglgene_anchor', 'anglgene_biology', 'anglgene_noiselo', 'anglgene_noisehi', 'anglgene_mod', 'anglgene_anchor_mod', 'anglgene_biology_mod', 'hvg_rfilter', 'hvg_rweight', 'hvg_intersect', 'full', 'rand', 'topbtvr', 'bottombtvr']"),
     make_option(c("-b", "--batch_key"),
                             default = "batch",
                             type = "character",

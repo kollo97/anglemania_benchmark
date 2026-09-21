@@ -73,7 +73,7 @@ suppressPackageStartupMessages({
     library(uwot)
 })
 
-source(file.path(scripts_dir, "ggplot_utils.R"))
+source(file.path(scripts_dir, "R", "ggplot_utils.R"))
 today <- format(Sys.Date(), "%Y%m%d")
 ```
 

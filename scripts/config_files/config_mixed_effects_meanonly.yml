@@ -1,0 +1,40 @@
+# Counterfactual run: anglemania gene pairs ranked by |mean_zscore| ALONE
+# (score_weights = (1, 0)) instead of the default 0.4/0.6 mean/sd blend.
+#
+# Purpose: docs/ANGLEMANIA_INSTABILITY_ANALYSIS.md attributes anglemania's LOBO
+# gene-set churn to sd_zscore, and shows mean-only ranking would be far more
+# stable (top-100 gene-pair Jaccard 0.78 vs 0.046; gene-set Jaccard 0.61 vs
+# 0.20). This config measures what that stability *costs* in integration
+# quality, which is the number that actually matters.
+#
+# The `anglmean` gene lists are NOT produced by prepare_inputs.py — no rule in
+# rules/preprocess.smk matches that gene_selection. They are written directly
+# into preprocessed/ by scripts/R/make_mean_only_gene_lists.R (a pure re-sort of
+# the existing anglemania_stats/ pair tables), so Snakemake treats them as
+# pre-existing inputs and only the integrate -> metrics -> combine chain runs.
+# Run that script first.
+#
+# Scope: baseline + the 4 LOBO samples only, and gene_selection is anglmean
+# only, so this run cannot touch the default angl/hvg outputs. `name` differs
+# from config_mixed_effects.yml so the combine rule writes a separate
+# combined-metrics file rather than overwriting the existing one; compare the
+# two with scripts/R/compare_meanonly_metrics.R.
+name: mixed_effects_meanonly_lobo
+
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/mixed_effects/samplesheet_meanonly_lobo.tsv"
+output_dir: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/mixed_effects/pipeline_output/"
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+out_embedding: "embedding/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+permutation_function: "sample"
+normalization_mode: "classical"
+n_genes: 2000
+
+integration_methods: ["scanorama", "scvi"]
+gene_selection: ["anglmean"]
+gpu: False

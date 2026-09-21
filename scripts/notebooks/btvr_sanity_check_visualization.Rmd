@@ -42,7 +42,7 @@ suppressPackageStartupMessages({
     library(patchwork)
     library(yaml)
 })
-source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/R/ggplot_utils.R")
 ```
 
 ```{r paths}

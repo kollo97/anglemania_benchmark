@@ -6,3 +6,7 @@ scripts/playground*
 output/snakemake_logs/
 output/
 scripts/pipeline_scripts/__pycache__
+# pipeline run logs (snakemake + slurm)
+scripts/logs/
+# reference papers kept locally, not redistributed
+/*.pdf

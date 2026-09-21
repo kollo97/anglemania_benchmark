@@ -1,6 +1,10 @@
+# Trimmed to the de.facLoc 0.1 main-dataset slice (54 samples, groupCells1000).
+# The other de.facLoc levels and the groupCells500 copies were pruned from disk;
+# see docs/DATASETS.md §1.3.
+
 name: facScale01_groupCells1000
 
-samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_facScale0.1.tsv"
+samplesheet: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/samplesheet_facScale0.1_deLoc0.1.tsv"
 #specify output directory
 output_dir: "/data/akalin/akollot/anglemania_benchmark/simulated/anglemania_ranking/facScale0.1/groupCells1000/"
 # specify sub dir in output directory for outputs of the two separate rules

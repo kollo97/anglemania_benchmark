@@ -111,6 +111,28 @@ Config files for different experiments are in `scripts/config_files/`. Key confi
 - `normalization_mode`: `"classical"` (CP10K + log1p) | `"pflog1ppf"` (shifted-CLR). Only affects `angl` (passed through to pyanglemania's `normalization_method`). `hvg` always normalizes with plain CP10K + log1p before scanpy's dispersion-based `seurat` flavor — `pflog1ppf` is incompatible with it (its per-cell mean-centering breaks `seurat`'s dispersion calculation; verified ~40% of genes get NaN dispersion), so it's hardcoded rather than exposed as a choice there.
 - `n_genes`: integer (default 2000)
 
+## Repository Layout
+
+`scripts/` separates pipeline code from one-off analysis code:
+
+```
+scripts/
+  Snakefile.smk           # workflow entrypoint
+  rules/                  # preprocess.smk, integrate.smk, metrics.smk
+  pipeline_scripts/       # everything the Snakemake rules invoke (.py and .R)
+  config_files/           # *.yml configs + samplesheets
+  slurm_profile/          # SLURM executor profile
+  R/                      # standalone R analysis/plotting scripts (not called by the pipeline)
+  python/                 # standalone Python analysis scripts (not called by the pipeline)
+  utils/                  # R helpers sourced by scripts/R/* and the notebooks
+  notebooks/              # .Rmd visualization and simulation notebooks
+  *.sh                    # shell wrappers (run_genelevel_variant_lists.sh)
+```
+
+Only `pipeline_scripts/` is referenced from `rules/*.smk`. The `R/` and `python/`
+scripts are run by hand — their header comments give the exact invocation, and
+paths in them are relative to the repo root, so run them from there.
+
 ## Pipeline Architecture
 
 The Snakemake workflow (`scripts/Snakefile.smk`) chains three rule files:
@@ -120,7 +142,7 @@ rules/preprocess.smk   → scripts/pipeline_scripts/prepare_inputs.py
                           rule preprocess_cpu (hvg/full/rand/topbtvr/bottombtvr, CPU)
                           rule preprocess_gpu (angl, resources: gres="gpu:1", gpu_slots=1)
 rules/integrate.smk    → scripts/pipeline_scripts/integration.py  (Python methods)
-                       → scripts/seurat_integration.R             (Seurat method)
+                       → scripts/pipeline_scripts/seurat_integration.R (Seurat method)
 rules/metrics.smk      → scripts/pipeline_scripts/metrics-scib_metrics.py  (scib_metrics)
                        → scripts/pipeline_scripts/metrics-bNMI.py           (balanced NMI)
                        → scripts/pipeline_scripts/metrics-cms.R             (CellMixS CMS)
@@ -132,8 +154,8 @@ rules/metrics.smk      → scripts/pipeline_scripts/metrics-scib_metrics.py  (sc
 
 **Data flow:**
 1. **Preprocess** (`prepare_inputs.py`): reads `.h5ad`, selects genes using the specified method (`hvg` → CP10K + log1p then `scanpy.pp.highly_variable_genes(flavor="seurat", batch_key=...)`, `angl` → `pyanglemania.preprocessing.anglemania` on GPU with `normalization_method` set from `normalization_mode`, plus `full`/`rand`/`topbtvr`/`bottombtvr`), writes a TSV with column `hgnc_symbol`.
-2. **Integrate** (`integration.py` or `seurat_integration.R`): reads original `.h5ad` + gene list TSV, runs integration, writes integrated `.h5ad` with embedding in `obsm["X_emb"]`.
-3. **Metrics** (4 parallel scripts): each reads original + integrated `.h5ad`, computes one metric group, writes a TSV with columns `[metric, sample, integration_method, gene_selection]`.
+2. **Integrate** (`integration.py` or `seurat_integration.R`): reads original `.h5ad` + gene list TSV, runs integration, writes the cell embedding as a TSV to `embedding/{sample}/{method}/{sample}_{gene_selection}.tsv`.
+3. **Metrics** (4 parallel scripts): each takes `--original_h5ad` + `--embedding_tsv`, computes one metric group, writes a TSV with columns `[metric, sample, integration_method, gene_selection]`.
 4. **Combine** (`combine_metrics.py`): merges all metric TSVs, recomputes Bio conservation / Batch correction / Total scores (60/40 weighted mean).
 
 **Metrics computed:**
@@ -152,12 +174,12 @@ python3 scripts/pipeline_scripts/prepare_inputs.py \
 # Integration (Python methods)
 python3 scripts/pipeline_scripts/integration.py \
     --infile=data/sample.h5ad --feature_subset=out/genes.tsv \
-    --outfile=out/integrated.h5ad --integration_method=harmony \
+    --outfile=out/embedding.tsv --integration_method=harmony \
     --batch_key=Batch --label_key=Group
 
 # scib metrics
 python3 scripts/pipeline_scripts/metrics-scib_metrics.py \
-    --original_h5ad=data/sample.h5ad --integrated_h5ad=out/integrated.h5ad \
+    --original_h5ad=data/sample.h5ad --embedding_tsv=out/embedding.tsv \
     --outfile=out/metrics.tsv --sample=mysample \
     --gene_selection=angl --integration_method=harmony \
     --batch_key=Batch --label_key=Group
@@ -168,8 +190,8 @@ python3 scripts/pipeline_scripts/metrics-scib_metrics.py \
 ```
 output_dir/
   preprocessed/           # {sample}_{gene_selection}.tsv  (gene lists)
-  integration/
-    {sample}/{method}/    # {sample}_{gene_selection}.h5ad (integrated data)
+  embedding/
+    {sample}/{method}/    # {sample}_{gene_selection}.tsv (cell embeddings)
   metrics/
     {sample}/{method}/    # *_scibmetrics.tsv, *_bnmi.tsv, *_cms.tsv, *_ldfDiff.tsv
     {name}_combined_metrics.tsv
@@ -177,9 +199,9 @@ output_dir/
 
 ## Key Notes
 
-- All integrated objects must store their embedding in `obsm["X_emb"]`
+- `integration.py` stores the embedding in `obsm["X_emb"]` internally, then writes it out as the embedding TSV the metrics rules consume
 - scanorama requires cells sorted by batch (done automatically in `integration.py`)
 - The `JAX_PLATFORMS=cpu` environment variable is set before Python integrations to prevent JAX GPU conflicts
 - GPU resources are assigned via `gres="gpu:1"` for `scvi`/`scanvi` in `integrate` and always for `preprocess_gpu` (the `angl` gene-selection rule); pipeline-wide GPU concurrency is capped separately via the `gpu_slots` resource (see SLURM execution details above)
 - Notebooks for visualization and simulation are in `scripts/notebooks/`
-- Utility ggplot functions shared across notebooks are in `scripts/utils/ggplot_utils.R` and `scripts/ggplot_utils.R`
+- Utility ggplot functions shared across notebooks are in `scripts/R/ggplot_utils.R` (the full set: `draw_heatmap*`, `theme_big_text`, `today`) and `scripts/utils/ggplot_utils.R` (only `big_text_theme`) — two separate files, not copies

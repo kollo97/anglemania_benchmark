@@ -1,0 +1,40 @@
+# Per-gene anglemania scores (signal / R, expression-binned) vs pair-ranked angl
+# and hvg, on the mixed-effects simulation baseline.
+# See docs/making_anglemania_per_gene_level_score.md and
+# scripts/pipeline_scripts/gene_level_scores.py.
+name: genelevel_sim_baseline
+
+samplesheet: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/config_files/samplesheet_genelevel_sim.tsv"
+output_dir: "/local/Projects/AAkalin_Neuroblastoma/Results/simulate_single_cell/h5ad/mixed_effects/pipeline_output/"
+out_preprocessed: "preprocessed/"
+out_integration: "integration/"
+out_metrics: "metrics/"
+out_embedding: "embedding/"
+
+batch_key: "Batch"
+label_key: "Group"
+anglemania_mode: "cosine"
+permutation_function: "sample"
+normalization_mode: "classical"
+n_genes: 2000
+
+# anglgene only: DUBStepR-style expression binning + the two axes' weights
+anglgene_n_bins: 20
+anglgene_weight_signal: 0.5
+anglgene_weight_R: 0.5
+
+# anglgene_* residual-axis arms: LOESS span for the two residual fits, and the
+# per-gene mean-expression bins the moderated-S prior trend is fitted over.
+anglgene_loess_span: 0.5
+anglgene_moderate_n_bins: 10
+# Every anglgene_* arm is a different ranking of the SAME cross-batch M/S.
+# make_genelevel_variant_lists.py computes it once and writes the table here;
+# preprocess_gpu reuses it instead of paying for the GPU pass per arm.
+anglgene_score_table_dir: "/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/output/genelevel_signal_R/variant_tables"
+
+integration_methods: ["scanorama", "scvi"]
+gene_selection: ["hvg", "angl", "anglgene", "anglgene_nobin",
+                 "anglgene_anchor", "anglgene_biology",
+                 "anglgene_noiselo", "anglgene_noisehi",
+                 "anglgene_mod", "anglgene_anchor_mod", "anglgene_biology_mod"]
+gpu: False

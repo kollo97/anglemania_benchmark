@@ -8,7 +8,7 @@ library(dplyr)
 library(ggplot2)
 library(scales)
 library(tidyverse)
-source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/ggplot_utils.R")
+source("/home/akollot/projects/CRC1588/dataset_integration/anglemania_benchmark/scripts/R/ggplot_utils.R")
 today <- format(Sys.Date(), "%Y%m%d")
 library(glue)
 ```
