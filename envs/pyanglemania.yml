@@ -36,4 +36,4 @@ dependencies:
       # replaces. Swap for a pinned
       # "pyanglemania @ git+https://github.com/omnideconv/pyanglemania@<sha>"
       # if the benchmark ever needs to be reproducible off this machine.
-      - -e /home/akollot/projects/pyanglemania
+      - pyanglemania
